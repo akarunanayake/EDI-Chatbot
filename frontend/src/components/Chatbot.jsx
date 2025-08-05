@@ -1,5 +1,8 @@
-import { useState, useRef , useEffect} from "react";
+import { useState, useRef, useEffect } from "react";
 import { Plus } from "lucide-react";
+
+// Define the base API URL from the environment variable
+const apiUrl = import.meta.env.VITE_API_URL;
 
 const Chatbot = () => {
   const [sessionFile, setSessionFile] = useState(null);
@@ -13,16 +16,17 @@ const Chatbot = () => {
   const [loadingSessions, setLoadingSessions] = useState(false);
 
   const updatePhrases = [
-  "update your lesson plan",
-  "update the lesson plan",
-  "updating your lesson plan"
-];
+    "update your lesson plan",
+    "update the lesson plan",
+    "updating your lesson plan",
+  ];
 
   const initializeChat = async () => {
     const formData = new FormData();
-    
+
     try {
-      const res = await fetch("http://localhost:8000/chatStart", {
+      // Use the apiUrl variable
+      const res = await fetch(`${apiUrl}/chatStart`, {
         method: "POST",
         body: formData,
       });
@@ -40,7 +44,8 @@ const Chatbot = () => {
   const fetchSessions = async () => {
     try {
       setLoadingSessions(true);
-      const res = await fetch("http://localhost:8000/sessions");
+      // Use the apiUrl variable
+      const res = await fetch(`${apiUrl}/sessions`);
       const data = await res.json();
       setSessions(data);
       setLoadingSessions(false);
@@ -52,35 +57,36 @@ const Chatbot = () => {
 
   const fetchMessages = async (id) => {
     try {
-      const res = await fetch(`http://localhost:8000/sessionMessages?session_id=${id}`);
+      // Use the apiUrl variable
+      const res = await fetch(`${apiUrl}/sessionMessages?session_id=${id}`);
       const data = await res.json();
       // Format messages to your frontend style
-      const formatted = data.messages.map(m => ({
+      const formatted = data.messages.map((m) => ({
         sender: m.role === "user" ? "user" : "bot",
         text: m.content,
       }));
       setMessages(formatted);
       setSessionId(id);
-      setSessionFile(data.file)
-    } catch (err) {
+      setSessionFile(data.file);
+    } catch (err) { // Corrected line: removed the underscore
       console.error("Failed to fetch session messages", err);
     }
   };
 
-
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
-    
-    fetchSessions()
+
+    fetchSessions();
     initializeChat(); // Initial session creation on page load
   }, []);
-
 
   const appendMessage = (sender, text) => {
     setMessages((prev) => [...prev, { sender, text }]);
     setTimeout(() => {
-      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+      if (chatBoxRef.current) {
+        chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+      }
     }, 100);
   };
 
@@ -94,16 +100,17 @@ const Chatbot = () => {
     }
     if (sessionId) {
       formData.append("session_id", sessionId);
-    } 
+    }
 
     try {
-    setLoadingBot(true);
-    const endpoint = "http://localhost:8000/fileUpload";
+      setLoadingBot(true);
+      // Use the apiUrl variable
+      const endpoint = `${apiUrl}/fileUpload`;
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      body: formData,
-    });
+      const res = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+      });
       const data = await res.json();
       appendMessage("bot", data.response);
       setLoadingBot(false);
@@ -111,8 +118,7 @@ const Chatbot = () => {
     } catch (err) {
       appendMessage("bot", "Error: Could not connect to chatbot API.");
       setLoadingBot(false);
-    }  
-
+    }
   };
 
   const handleSend = async () => {
@@ -124,45 +130,22 @@ const Chatbot = () => {
 
     const formData = new FormData();
     formData.append("message", input);
-    
+
     // If sessionId exists, it's a follow-up message
     if (sessionId) {
       formData.append("session_id", sessionId);
-    } 
+    }
     if (!sessionFile) {
-        appendMessage("bot", "Please upload a lesson plan file before starting.");
-        return;
-    } 
-    
+      appendMessage("bot", "Please upload a lesson plan file before starting.");
+      return;
+    }
 
     try {
-    setLoadingBot(true);
-    const endpoint = "http://localhost:8000/chatContinue";
+      setLoadingBot(true);
+      // Use the apiUrl variable
+      const endpoint = `${apiUrl}/chatContinue`;
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      body: formData,
-    });
-      const data = await res.json();
-      appendMessage("bot", data.response);
-      setLoadingBot(false);
-    } catch (err) {
-      appendMessage("bot", "Error: Could not connect to chatbot API.");
-      setLoadingBot(false);
-    }  
-  };
-
-  const handleUpdateLesson = async () => {
-    const lastBotMsg = messages.filter(m => m.sender === "bot").pop()?.text;
-    if (!lastBotMsg || !sessionId) return;
-
-    const formData = new FormData();
-    formData.append("session_id", sessionId);
-    formData.append("new_content", lastBotMsg);
-
-    try {
-        setLoadingBot(true);
-        const res = await fetch("http://localhost:8000/updateLesson", {
+      const res = await fetch(endpoint, {
         method: "POST",
         body: formData,
       });
@@ -172,11 +155,35 @@ const Chatbot = () => {
     } catch (err) {
       appendMessage("bot", "Error: Could not connect to chatbot API.");
       setLoadingBot(false);
-    } 
+    }
+  };
+
+  const handleUpdateLesson = async () => {
+    const lastBotMsg = messages.filter((m) => m.sender === "bot").pop()?.text;
+    if (!lastBotMsg || !sessionId) return;
+
+    const formData = new FormData();
+    formData.append("session_id", sessionId);
+    formData.append("new_content", lastBotMsg);
+
+    try {
+      setLoadingBot(true);
+      // Use the apiUrl variable
+      const res = await fetch(`${apiUrl}/updateLesson`, {
+        method: "POST",
+        body: formData,
+      });
+      const data = await res.json();
+      appendMessage("bot", data.response);
+      setLoadingBot(false);
+    } catch (err) {
+      appendMessage("bot", "Error: Could not connect to chatbot API.");
+      setLoadingBot(false);
+    }
   };
 
   const handleNewChat = () => {
-    setMessages([])
+    setMessages([]);
     setSessionFile(null);
     setSessionId(null);
     if (userInput.current) userInput.current.value = "";
@@ -187,16 +194,19 @@ const Chatbot = () => {
     <div className="w-screen h-screen flex flex-col md:flex-row">
       {/* History Column */}
       <div className="w-full md:w-1/5 bg-gray-100 p-4 border-b md:border-b-0 md:border-r overflow-y-auto">
-      <button
-        onClick={handleNewChat}
-        className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-      >
-        New Chat
-      </button>
-      <br/><br/>
+        <button
+          onClick={handleNewChat}
+          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+        >
+          New Chat
+        </button>
+        <br />
+        <br />
         <h2 className="text-lg font-semibold mb-4">Chat History</h2>
         {loadingSessions ? (
-          <div className="text-gray-500 text-sm animate-pulse">Loading sessions...</div>
+          <div className="text-gray-500 text-sm animate-pulse">
+            Loading sessions...
+          </div>
         ) : (
           <ul className="space-y-2">
             {sessions.length === 0 && <li>No sessions yet</li>}
@@ -224,7 +234,9 @@ const Chatbot = () => {
       <div className="w-full md:w-4/5 flex flex-col p-4">
         {/* Greeting Message */}
         <div className="mb-4 text-center">
-          <p className="text-xl font-semibold text-gray-800">Welcome to EDI Integration Assistant</p>
+          <p className="text-xl font-semibold text-gray-800">
+            Welcome to EDI Integration Assistant
+          </p>
         </div>
 
         {/* Chat Window */}
@@ -233,17 +245,25 @@ const Chatbot = () => {
           className="flex-1 overflow-y-auto bg-white rounded p-4 mb-4"
         >
           {messages.map((msg, idx) => {
-          const isLastBotMessage =msg.sender === "bot" && idx === messages.length - 1;
-          const showUpdateButton =isLastBotMessage &&
-          updatePhrases.some(phrase =>
-            msg.text.toLowerCase().includes(phrase)
-          );
-          const showDownloadButton = isLastBotMessage && msg.text.toLowerCase().includes("updated lesson plan")
+            const isLastBotMessage =
+              msg.sender === "bot" && idx === messages.length - 1;
+            const showUpdateButton =
+              isLastBotMessage &&
+              updatePhrases.some((phrase) =>
+                msg.text.toLowerCase().includes(phrase)
+              );
+            const showDownloadButton =
+              isLastBotMessage &&
+              msg.text.toLowerCase().includes("updated lesson plan");
 
             return (
               <div key={idx} className="mb-2">
                 {/* Message bubble */}
-                <div className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
+                <div
+                  className={`flex ${
+                    msg.sender === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
                   <div
                     className={`px-4 py-2 rounded-lg max-w-[80%] text-sm whitespace-pre-wrap ${
                       msg.sender === "user"
@@ -271,7 +291,8 @@ const Chatbot = () => {
                   <div>
                     <div className="flex justify-end items-center mt-1 space-x-2">
                       <a
-                        href={`http://localhost:8000/downloadLesson?session_id=${sessionId}`}
+                        // Use the apiUrl variable for the download link
+                        href={`${apiUrl}/downloadLesson?session_id=${sessionId}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="bg-purple-600 text-white px-3 py-1 text-xs rounded hover:bg-purple-700 shadow-md"
@@ -289,7 +310,7 @@ const Chatbot = () => {
               </div>
             );
           })}
-           {loadingBot && (
+          {loadingBot && (
             <div className="flex justify-start mb-2">
               <div className="px-4 py-2 rounded-lg bg-gray-100 text-gray-800 text-sm animate-pulse">
                 ✨ Thinking...
@@ -330,4 +351,3 @@ const Chatbot = () => {
 };
 
 export default Chatbot;
-
