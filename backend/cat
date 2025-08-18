@@ -1,0 +1,19 @@
+server {
+    listen 80;
+    server_name 118.138.244.157;
+    client_max_body_size 100M;
+
+    # 1. Serves the Frontend Files
+    root /home/ubuntu/EDI-Chatbot/frontend;
+    index index.html;
+
+    # 2. Handles Frontend Routing
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 3. Forwards API Requests to the Backend
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000/;
+    }
+}

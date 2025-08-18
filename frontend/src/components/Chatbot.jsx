@@ -204,7 +204,7 @@ const Chatbot = () => {
   formData.append("feedback", feedbackText);
 
   try {
-    const res = await fetch("http://localhost:8000/submitFeedback", {
+    const res = await fetch(`${apiUrl}/submitFeedback`, {
       method: "POST",
       body: formData,
     });
