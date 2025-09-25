@@ -18,12 +18,14 @@ const Chatbot = () => {
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackProvider, setFeedbackProvider] = useState("");
 
+  //The messages that need to be include in the assistance message to appear the update lesson plan button
   const updatePhrases = [
     "update your lesson plan",
     "update the lesson plan",
     "updating your lesson plan",
   ];
 
+//Start of a chat session
   const initializeChat = async () => {
     const formData = new FormData();
 
@@ -44,6 +46,7 @@ const Chatbot = () => {
     }
   };
 
+  //Fetch chat sessions to display in chat history
   const fetchSessions = async () => {
     try {
       setLoadingSessions(true);
@@ -58,13 +61,14 @@ const Chatbot = () => {
     }
   };
 
+  //Fetch messges of the chat session selected from chat history
   const fetchMessages = async (id) => {
     try {
       // Use the apiUrl variable
       const res = await fetch(`${apiUrl}/sessionMessages?session_id=${id}`);
       const data = await res.json();
-      // Format messages to your frontend style
-      const formatted = data.messages.map((m) => ({
+      // Format messages to the frontend style
+      const formatted = data.messages.map(m => ({
         sender: m.role === "user" ? "user" : "bot",
         text: m.content,
       }));
@@ -76,14 +80,17 @@ const Chatbot = () => {
     }
   };
 
+
+//Trigger at the beginning of the page load
   useEffect(() => {
     if (hasInitialized.current) return;
     hasInitialized.current = true;
-
-    fetchSessions();
+    
+    fetchSessions() //Retrive chat sessions for the chat history
     initializeChat(); // Initial session creation on page load
   }, []);
 
+//Append message on the chat window
   const appendMessage = (sender, text) => {
     setMessages((prev) => [...prev, { sender, text }]);
     setTimeout(() => {
@@ -93,6 +100,7 @@ const Chatbot = () => {
     }, 100);
   };
 
+  //Trigger when upload a file
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     const formData = new FormData();
@@ -106,9 +114,8 @@ const Chatbot = () => {
     }
 
     try {
-      setLoadingBot(true);
-      // Use the apiUrl variable
-      const endpoint = `${apiUrl}/fileUpload`;
+    setLoadingBot(true); //To appear "Thinking" icon
+    const endpoint = "http://localhost:8000/fileUpload";
 
       const res = await fetch(endpoint, {
         method: "POST",
@@ -116,7 +123,7 @@ const Chatbot = () => {
       });
       const data = await res.json();
       appendMessage("bot", data.response);
-      setLoadingBot(false);
+      setLoadingBot(false);//To disappear "Thinking" icon
       fetchSessions();
     } catch (err) {
       appendMessage("bot", "Error: Could not connect to chatbot API.");
@@ -124,6 +131,7 @@ const Chatbot = () => {
     }
   };
 
+  //Trigger when click send
   const handleSend = async () => {
     const input = userInput.current.value.trim();
     if (!input) return;
@@ -161,6 +169,7 @@ const Chatbot = () => {
     }
   };
 
+  //Trigger when click Update lesson plan
   const handleUpdateLesson = async () => {
     const lastBotMsg = messages.filter((m) => m.sender === "bot").pop()?.text;
     if (!lastBotMsg || !sessionId) return;
@@ -185,6 +194,7 @@ const Chatbot = () => {
     }
   };
 
+  //Initialize a new chat
   const handleNewChat = () => {
     setMessages([]);
     setSessionFile(null);
@@ -193,10 +203,8 @@ const Chatbot = () => {
     initializeChat();
   };
 
-  const handleSendFeedack = () => {
-    setShowFeedbackPopup(true);
-  };
 
+  //Trigger when submit a feedback
   const submitFeedback = async () => {
   if (!feedbackText.trim()) return;
 
@@ -223,7 +231,7 @@ const Chatbot = () => {
 
 return (
     <div className="w-screen h-screen flex flex-col md:flex-row">
-      {/* History Column */}
+      {/* Left Panel */}
       <div className="w-full md:w-1/5 bg-gray-100 p-4 border-b md:border-b-0 md:border-r overflow-y-auto">
         <button
           onClick={handleNewChat}
@@ -260,7 +268,7 @@ return (
         )}
       </div>
 
-      {/* Chat Column */}
+      {/* Chat Window */}
       <div className="w-full md:w-4/5 flex flex-col p-4">
         <div className="mb-4 text-center">
           <p className="text-xl font-semibold text-gray-800">Welcome to GenEDIt</p>
