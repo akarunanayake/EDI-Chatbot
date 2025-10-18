@@ -15,7 +15,7 @@ from .db import SessionLocal
 from fastapi.responses import StreamingResponse
 from docx import Document
 import io
-from sqlalchemy import or_
+from fastapi import Request
 
 #Load OpenAI API key
 load_dotenv()
@@ -142,8 +142,6 @@ MAX_HISTORY = 20
 UPLOAD_DIR = "lessonPlans"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-BASE_URL = os.getenv("BASE_URL", "http://118.138.244.157")
-
 #Functions to extract text from the uploaded lesson plan
 def extract_text_from_docx(file_bytes: bytes) -> str:
     doc = Document(BytesIO(file_bytes))
@@ -263,7 +261,7 @@ async def chatContinue(message: str = Form(...), session_id: str = Form(...)):
     return {"response": api_response, "session_id": session_id}
 
 @app.post("/fileUpload")
-async def chatStart(file: UploadFile = File(None), session_id: Optional[str] = Form(None)):
+async def chatStart(request: Request, file: UploadFile = File(None), session_id: Optional[str] = Form(None)):
     db = SessionLocal()
     file_content=""
     #Extract content of the lesson plan
@@ -306,7 +304,8 @@ async def chatStart(file: UploadFile = File(None), session_id: Optional[str] = F
 
         api_response = response.choices[0].message.content
 
-        file_link = f"{BASE_URL}/viewFile?session_id={session_id}"
+        file_link = str(request.base_url) + f"viewFile?session_id={session_id}"
+
         db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
         db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
         db.add(Message(session_id=session_id, role="assistant", content=api_response))
