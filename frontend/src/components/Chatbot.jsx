@@ -71,6 +71,7 @@ const Chatbot = () => {
       const formatted = data.messages.map(m => ({
         sender: m.role === "user" ? "user" : "bot",
         text: m.content,
+        file_link: m.file_link
       }));
       setMessages(formatted);
       setSessionId(id);
@@ -92,7 +93,7 @@ const Chatbot = () => {
 
 //Append message on the chat window
   const appendMessage = (sender, text) => {
-    setMessages((prev) => [...prev, { sender, text }]);
+    setMessages((prev) => [...prev, { sender, text}]);
     setTimeout(() => {
       if (chatBoxRef.current) {
         chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
@@ -295,7 +296,18 @@ return (
                         : "bg-gray-100 text-gray-800"
                     }`}
                   >
-                    {msg.text}
+                    {msg.file_link ? (
+                      <a
+                        href={msg.file_link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-red-600 underline"
+                      >
+                        {msg.text}
+                      </a>
+                    ) : (
+                      msg.text
+                    )}
                   </div>
                 </div>
 
