@@ -15,6 +15,7 @@ from .db import SessionLocal
 from fastapi.responses import StreamingResponse
 from docx import Document
 import io
+from sqlalchemy import or_
 
 #Load OpenAI API key
 load_dotenv()
@@ -137,6 +138,10 @@ After providing suggestions, ask whether they’d like to design an individual o
 #Initialize maximum number of messages in the chat history
 MAX_HISTORY = 20
 
+#Create folder to save lesson plan
+UPLOAD_DIR = "lessonPlans"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
 #Functions to extract text from the uploaded lesson plan
 def extract_text_from_docx(file_bytes: bytes) -> str:
     doc = Document(BytesIO(file_bytes))
@@ -209,7 +214,7 @@ async def chatStart():
 
     # Initiate conversation executing system prompt
     db.add(ChatSession(id=session_id))
-    db.add(Message(session_id=session_id, role="system", content=SYSTEM_PROMPT))
+    db.add(Message(session_id=session_id, role="system", content=SYSTEM_PROMPT, visible=False))
 
     response = client.chat.completions.create(
             model="gpt-4.1-mini",
@@ -262,6 +267,11 @@ async def chatStart(file: UploadFile = File(None), session_id: Optional[str] = F
     #Extract content of the lesson plan
     if file:
         file_bytes = await file.read()
+        unique_name = f"{uuid4()}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, unique_name)
+        with open(file_path, "wb") as f:
+            f.write(file_bytes)
+
         if file.filename.endswith(".docx"):
             file_content = extract_text_from_docx(file_bytes)
         elif file.filename.endswith(".pdf"):
@@ -294,10 +304,15 @@ async def chatStart(file: UploadFile = File(None), session_id: Optional[str] = F
 
         api_response = response.choices[0].message.content
 
-        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}"))
+        file_link = f"http://localhost:8000/viewFile?session_id={session_id}"
+        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
+        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
         db.add(Message(session_id=session_id, role="assistant", content=api_response))
         chat_session.original_lesson = file_content #Update lesson plan in db with uploaded file content
         chat_session.updated_lesson = file_content
+        chat_session.file_name = file.filename
+        chat_session.file_path = file_path
+        chat_session.file_type = file.content_type
         db.commit()
 
         db.close()
@@ -324,7 +339,9 @@ def get_sessions():
 def get_session_messages(session_id: str = Query(...)):
     file = ""
     db = SessionLocal()
-    messages = db.query(Message).filter_by(session_id=session_id).order_by(Message.timestamp).all()
+    query = db.query(Message).filter_by(session_id=session_id)
+    query = query.filter_by(visible=True)
+    messages = query.order_by(Message.timestamp).all()
     session = db.query(ChatSession).filter_by(id=session_id).first()
     if session:
         if session.updated_lesson:
@@ -332,9 +349,31 @@ def get_session_messages(session_id: str = Query(...)):
         else:
             file = session.original_lesson
             
-    results = [{"role": m.role, "content": m.content} for m in messages]
+    results = [{"role": m.role, "content": m.content, "file_link": m.file_link} for m in messages]
     db.close()
     return {"file": file, "messages": results}
+
+from fastapi.responses import FileResponse
+
+#View uploaded lesson plan in chat history
+@app.get("/viewFile")
+def view_file(session_id: str = Query(...)):
+    db = SessionLocal()
+    chat_session = db.query(ChatSession).filter_by(id=session_id).first()
+    db.close()
+
+    if not chat_session or not chat_session.file_path:
+        return JSONResponse(status_code=404, content={"error": "File not found."})
+
+    return FileResponse(
+        path=chat_session.file_path,
+        media_type=chat_session.file_type,
+        filename=chat_session.file_name,
+        headers={
+            "Content-Disposition": f"inline; filename={chat_session.file_name}"
+        }
+    )
+
 
 #Lesson plan update functionality
 @app.post("/updateLesson")
