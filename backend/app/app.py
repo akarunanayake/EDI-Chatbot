@@ -142,7 +142,8 @@ MAX_HISTORY = 20
 UPLOAD_DIR = "lessonPlans"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-BASE_URL = os.getenv("BASE_URL", "http://118.138.244.157")
+#BASE_URL = os.getenv("BASE_URL", "http://118.138.244.157")
+BASE_URL = "http://118.138.244.157"
 
 #Functions to extract text from the uploaded lesson plan
 def extract_text_from_docx(file_bytes: bytes) -> str:
