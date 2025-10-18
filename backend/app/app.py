@@ -142,6 +142,8 @@ MAX_HISTORY = 20
 UPLOAD_DIR = "lessonPlans"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+BASE_URL = os.getenv("BASE_URL", "http://118.138.244.157")
+
 #Functions to extract text from the uploaded lesson plan
 def extract_text_from_docx(file_bytes: bytes) -> str:
     doc = Document(BytesIO(file_bytes))
@@ -304,7 +306,7 @@ async def chatStart(file: UploadFile = File(None), session_id: Optional[str] = F
 
         api_response = response.choices[0].message.content
 
-        file_link = f"http://localhost:8000/viewFile?session_id={session_id}"
+        file_link = f"{BASE_URL}/viewFile?session_id={session_id}"
         db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
         db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
         db.add(Message(session_id=session_id, role="assistant", content=api_response))
