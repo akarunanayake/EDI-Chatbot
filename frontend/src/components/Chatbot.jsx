@@ -116,7 +116,7 @@ const Chatbot = () => {
 
     try {
     setLoadingBot(true); //To appear "Thinking" icon
-    const endpoint = "http://localhost:8000/fileUpload";
+    const endpoint = `${apiUrl}/fileUpload`;;
 
       const res = await fetch(endpoint, {
         method: "POST",
