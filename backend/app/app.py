@@ -139,8 +139,13 @@ After providing suggestions, ask whether they’d like to design an individual o
 MAX_HISTORY = 20
 
 #Create folder to save lesson plan
-UPLOAD_DIR = "lessonPlans"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+UPLOAD_DIR = os.path.join(BASE_DIR, "lessonPlans")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+#Check write permission (helps detect permission issues in deployed version)
+if not os.access(UPLOAD_DIR, os.W_OK):
+    print(f"Warning: Upload directory may not be writable: {UPLOAD_DIR}")
 
 #Functions to extract text from the uploaded lesson plan
 def extract_text_from_docx(file_bytes: bytes) -> str:
@@ -266,20 +271,27 @@ async def chatStart(request: Request, file: UploadFile = File(None), session_id:
     file_content=""
     #Extract content of the lesson plan
     if file:
-        file_bytes = await file.read()
+        # 🔹 Use universal path (cross-platform)
         unique_name = f"{uuid4()}_{file.filename}"
         file_path = os.path.join(UPLOAD_DIR, unique_name)
-        with open(file_path, "wb") as f:
-            f.write(file_bytes)
+        file_path = os.path.abspath(file_path)  # Ensure consistent path resolution
+
+        # 🔹 Save uploaded file
+        try:
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Failed to save file: {str(e)}"})
+
 
         if file.filename.endswith(".docx"):
-            file_content = extract_text_from_docx(file_bytes)
+            file_content = extract_text_from_docx(open(file_path, "rb").read())
         elif file.filename.endswith(".pdf"):
-            file_content = extract_text_from_pdf(file_bytes)
+            file_content = extract_text_from_pdf(open(file_path, "rb").read())
         else:
             try:
-                file_content = file_bytes.decode("utf-8")
-            except UnicodeDecodeError:
+                file_content = open(file_path, "r", encoding="utf-8").read()
+            except Exception:
                 file_content = "[File uploaded, but not readable.]"
 
         #Retrieve chat session
@@ -304,7 +316,7 @@ async def chatStart(request: Request, file: UploadFile = File(None), session_id:
 
         api_response = response.choices[0].message.content
 
-        file_link = str(request.base_url) + f"viewFile?session_id={session_id}"
+        file_link = str(request.url_for("view_file"))+ f"?session_id={session_id}"
 
         db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
         db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
@@ -357,7 +369,7 @@ def get_session_messages(session_id: str = Query(...)):
 from fastapi.responses import FileResponse
 
 #View uploaded lesson plan in chat history
-@app.get("/viewFile")
+@app.get("/viewFile", name="view_file")
 def view_file(session_id: str = Query(...)):
     db = SessionLocal()
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
@@ -365,6 +377,10 @@ def view_file(session_id: str = Query(...)):
 
     if not chat_session or not chat_session.file_path:
         return JSONResponse(status_code=404, content={"error": "File not found."})
+    
+    # Safely verify file exists before sending
+    if not os.path.exists(chat_session.file_path):
+        return JSONResponse(status_code=404, content={"error": "File missing on server."})
 
     return FileResponse(
         path=chat_session.file_path,
