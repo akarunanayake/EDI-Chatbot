@@ -122,8 +122,22 @@ const Chatbot = () => {
         method: "POST",
         body: formData,
       });
+
+      if (!res.ok) {
+        const ct = res.headers.get("content-type") || "";
+        const payload = ct.includes("application/json") ? await res.json() : await res.text();
+        throw new Error(`fileUpload failed: ${res.status} ${JSON.stringify(payload)}`);
+      }
+
+
       const data = await res.json();
       appendMessage("bot", data.response);
+      
+      // if (sessionId) {
+      //   const viewUrl = `${apiUrl}/viewFile?session_id=${sessionId}`;
+      //   appendMessage("user", `📎 View lesson plan: ${file.name}`, viewUrl);
+      // }
+
       setLoadingBot(false);//To disappear "Thinking" icon
       fetchSessions();
     } catch (err) {
@@ -179,20 +193,52 @@ const Chatbot = () => {
     formData.append("session_id", sessionId);
     formData.append("new_content", lastBotMsg);
 
+    // try {
+    //   setLoadingBot(true);
+    //   // Use the apiUrl variable
+    //   const res = await fetch(`${apiUrl}/updateLesson`, {
+    //     method: "POST",
+    //     body: formData,
+    //   });
+    //   const data = await res.json();
+    //   appendMessage("bot", data.response);
+    //   setLoadingBot(false);
+    // } catch (err) {
+    //   appendMessage("bot", "Error: Could not connect to chatbot API.");
+    //   setLoadingBot(false);
+    // }
+
     try {
       setLoadingBot(true);
-      // Use the apiUrl variable
       const res = await fetch(`${apiUrl}/updateLesson`, {
         method: "POST",
         body: formData,
+        // credentials: "include", // uncomment if your API uses cookies/sessions
       });
-      const data = await res.json();
-      appendMessage("bot", data.response);
-      setLoadingBot(false);
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        throw new Error(`updateLesson failed: ${res.status} ${text}`);
+      }
+
+      // Be tolerant if server returns non-JSON
+      let data;
+      const ct = res.headers.get("content-type") || "";
+      if (ct.includes("application/json")) {
+        data = await res.json();
+      } else {
+        const text = await res.text();
+        data = { response: text };
+      }
+
+      appendMessage("bot", data.response ?? "Updated lesson plan.");
     } catch (err) {
-      appendMessage("bot", "Error: Could not connect to chatbot API.");
+      console.error("updateLesson error:", err);
+      appendMessage("bot", `Error: Could not connect to chatbot API. ${String(err.message || "")}`);
+    } finally {
       setLoadingBot(false);
     }
+
   };
 
   //Initialize a new chat
