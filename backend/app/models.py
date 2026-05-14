@@ -14,6 +14,11 @@ class ChatSession(Base):
     file_name = Column(String, nullable=True)
     file_path = Column(String, nullable=True)
     file_type = Column(String, nullable=True)
+    suggested_edits = Column(Text, nullable=True)
+    working_file_name = Column(String, nullable=True)
+    working_file_path = Column(String, nullable=True)
+    working_file_type = Column(String, nullable=True)
+    
 
 class Message(Base):
     __tablename__ = "chat_messages"

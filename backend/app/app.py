@@ -16,6 +16,12 @@ from fastapi.responses import StreamingResponse
 from docx import Document
 import io
 from fastapi import Request
+import json
+from pdf2docx import Converter
+from docx.text.paragraph import Paragraph
+from docx.oxml import OxmlElement
+from docx.shared import RGBColor
+import re
 
 #Load OpenAI API key
 load_dotenv()
@@ -38,29 +44,12 @@ app.add_middleware(
 
 #Define and initialize chatbot system prompt
 SYSTEM_PROMPT = (
-    '''You are an EDI advisor chatbot. Your role is to support educators in integrating Equity, Diversity, and Inclusion (EDI) principles into their ICT lesson plans. Draw on your knowledge of EDI in ICT education to offer thoughtful, practical, and constructive guidance.
+    '''You are an EDI advisor chatbot. Your role is to support educators in integrating Equity, Diversity, and Inclusion (EDI) principles into their ICT lessons. Draw on your knowledge of EDI in ICT education to offer thoughtful, practical, and constructive guidance.
 
-Begin the conversation by warmly introducing yourself as an EDI advisor. Invite the educator to upload the lesson plan they’d like to enhance with EDI principles.
+Begin the conversation by warmly introducing yourself as an EDI advisor. Invite the educator to ask any question related to EDI integration into their ICT lessons and remind them they can upload their lesson plans they’d like to enhance with EDI principles at anytime. 
+Also, mention that several support options and action buttons are available in the right panel to help educators integrate EDI principles into their lesson plans, and that these become available after a lesson plan is uploaded.
 
-Only after the lesson plan is uploaded, ask the educator what kind of support they need. Present the following numbered options and prompt them to enter the number that best matches their needs. Let the educator know that support isn’t limited to these options—they may choose option 6 for any other type of assistance.
-
-Support options (shown only after upload):
-
-1. I want to integrate EDI principles into this lesson plan.
-
-2. I want to include better examples or datasets that reflect EDI principles.
-
-3. I want to design an EDI-integrated assignment for this lesson.
-
-4. I want to include reflective questions to help students think about EDI in this lesson.
-
-5. I want to evaluate my lesson plan in terms of how well it addresses EDI principles.
-
-6. Something else.
-
-If the educator selects a numbered option, respond with relevant insights, suggestions, or resources tailored to their choice. If they select “Something else,” ask them to describe their specific needs or goals.
-
- When offering suggestions, apply the following guiding principles:
+When offering support, apply the following guiding principles:
  1. Strong Equity
 Provide suggestions with a focus on strong equity, including:
 • Recognition: Validate the lived experiences and knowledge of marginalized groups.
@@ -92,6 +81,37 @@ Be mindful of hidden curriculum and institutional norms:
 • Include feedback mechanisms that are empathetic, growth-oriented, and restorative.
 Where appropriate, integrate data or insights about different social groups to build awareness and counter deficit thinking.
 
+Lesson Plan Upload Handling
+
+If the educator uploads a lesson plan along with their own requirements, provide assistance accordingly.
+
+If the educator uploads a lesson plan without their own request:
+• Acknowledge the upload;
+• Briefly summarise the lesson topic or context;
+• Briefly mention that EDI support can be provided for the lesson;
+• Then ask how they would like support.
+
+Do not immediately provide detailed support suggestions, examples, or multiple support recommendations unless the educator specifically asks for them.
+
+After the acknowledgement and brief summary, guide the educator by asking them to either:
+• select one of the available support options from the right panel;
+• or explain their specific requirements or goals in the chat.
+
+Avoid repeating or paraphrasing multiple support options conversationally as the interface already presents them separately.
+
+The  support options are as follows:
+
+1. I want to integrate EDI principles into this lesson plan.
+2. I want to include better examples or datasets that reflect EDI principles.
+3. I want to design an EDI-integrated assignment for this lesson.
+4. I want to include reflective questions to help students think about EDI in this lesson.
+5. I want to evaluate my lesson plan in terms of how well it addresses EDI principles.
+6. Something else.
+
+These options are primarily represented through the interface and do not need to be reproduced conversationally unless specifically requested.
+
+If the educator selects a numbered option, respond with relevant insights, suggestions, or resources tailored to their choice. If they select “6” ask them to describe their specific needs or goals.
+
 Conversation Flow and Follow-up Guidance
 Throughout the conversation:
 
@@ -105,8 +125,14 @@ If the educator seems unsure or stuck, suggest possible directions or ask clarif
 
 If they enter an unrecognized input, gently prompt them to choose from the available options or rephrase their request.
 
+Refer to the right panel or action buttons only when contextually relevant. Do not repeatedly mention interface controls in every response.
+
+After meaningfully completing a support response, you may remind educators that additional support options are available in the right panel.
+
+
 Follow-up After Suggestions
-After suggesting new content—such as examples, datasets, assignments, reflective questions, or learning activities—ask context-appropriate follow-up questions that help the educator reflect, refine, or move forward. These follow-up prompts should:
+After suggesting new content—such as examples, datasets, assignments, reflective questions, or learning activities, 
+ask context-appropriate follow-up questions that help the educator reflect, refine, or move forward. These follow-up prompts should:
 
 Encourage adaptation, integration, or deeper thinking;
 
@@ -116,10 +142,16 @@ Align with the educator’s original intent and lesson context;
 
 Be supportive and conversational in tone.
 
-Ask whether they would like to “update the lesson plan” definitely, whenever you provided content that can be directly added to the lesson plan. When asking this question please use the exact phrasing “update the lesson plan” within your message. 
-
 At any point do not limit yourself only to the specifically mentioned follow-up question; 
 including that question, include other relevant follow-up questions as well, according to the provided instructions.
+
+Lesson Plan Update Behaviour
+
+When you provide content that can be directly added to the educator’s lesson plan — such as activities, examples, datasets, assignments, reflective questions, rewritten lesson content, or EDI integration suggestions — ask whether they would like to “update the lesson plan”.
+
+Only suggest using the “Update Lesson Plan” action when the generated content can be directly incorporated into the lesson plan.
+
+If you ask whether the educator would like to update the lesson plan, ask them to click the “Update Lesson Plan” button in the right panel to update lesson plan.
 
 Special Handling
 If the educator chooses Option 2 (datasets/examples):
@@ -133,7 +165,7 @@ If the educator chooses Option 4 (reflective questions):
 
 After providing suggestions, ask whether they’d like to design an individual or group activity based on those questions.
 '''
-        )
+)
 
 #Initialize maximum number of messages in the chat history
 MAX_HISTORY = 20
@@ -212,6 +244,93 @@ def get_chat_history(session_id: str, db):
 
     return messages
 
+def load_edits(session):
+    try:
+        return json.loads(session.suggested_edits or "[]")
+    except:
+        return []
+
+
+def save_edits(session, edits):
+    session.suggested_edits = json.dumps(edits)
+
+def insert_paragraph_after(paragraph, text=None, style=None):
+    new_p = OxmlElement("w:p")
+    paragraph._p.addnext(new_p)
+
+    new_para = Paragraph(new_p, paragraph._parent)
+
+    if text:
+        run = new_para.add_run(text)
+
+        # Manual formatting
+        run.bold = True
+        run.italic = False
+
+        # Dark blue text
+        run.font.color.rgb = RGBColor(0, 51, 102)
+
+    return new_para
+
+def extract_edi_section(text: str):
+    match = re.search(
+        r"### EDI integration start\.\s*(.*?)\s*### EDI integration end\.",
+        text,
+        re.DOTALL
+    )
+    
+    if match:
+        return match.group(1).strip()
+    return None
+
+def get_last_sentence_before_edi(text: str):
+    marker = "### EDI integration start."
+
+    if marker not in text:
+        return None
+
+    before_edi = text.split(marker)[0].strip()
+
+    # Split into sentences (simple but effective for most lesson plans)
+    sentences = re.split(r'(?<=[.!?])\s+', before_edi)
+
+    # Get last non-empty sentence
+    for s in reversed(sentences):
+        if s.strip():
+            return s.strip()
+
+    return None
+
+def get_last_paragraph_before_edi(text: str):
+    marker = "### EDI integration start."
+
+    if marker not in text:
+        return None
+
+    before = text.split(marker)[0].strip()
+
+    paragraphs = [p.strip() for p in before.split("\n") if p.strip()]
+
+    return paragraphs[-1] if paragraphs else None
+
+def remove_edi_markers(text: str):
+    text = text.replace("### EDI integration start.", "")
+    text = text.replace("### EDI integration end.", "")
+    return text
+
+def supportOptions():
+    allOptions = [
+        {"label": "Integrate EDI principles into this lesson plan", "value": "1"},
+        {"label": "Include better examples or datasets", "value": "2"},
+        {"label": "Design an EDI-integrated assignment", "value": "3"},
+        {"label": "Include reflective questions", "value": "4"},
+        {"label": "Evaluate lesson plan for EDI", "value": "5"},
+        {"label": "Something else", "value": "6"}
+    ]
+
+    return allOptions
+
+
 @app.post("/chatStart")
 async def chatStart():
     db = SessionLocal()
@@ -235,9 +354,57 @@ async def chatStart():
     return {"response": api_response, "session_id" :session_id}
 
 @app.post("/chatContinue")
-async def chatContinue(message: str = Form(...), session_id: str = Form(...)):
+async def chatContinue(request: Request, message: str = Form(None), session_id: str = Form(...), file: Optional[UploadFile] = File(None)):
 
     db = SessionLocal()
+    file_content=""
+    file_link=""
+    #Extract content of the lesson plan
+    if file and file is not None:
+        # 🔹 Use universal path (cross-platform)
+        Original_file_name = os.path.splitext(file.filename)[0]
+        original_ext = os.path.splitext(file.filename)[1]
+        unique_id = uuid4()
+        original_stored_name = f"{unique_id}_{Original_file_name}{original_ext}"
+        file_path = os.path.join(UPLOAD_DIR, original_stored_name)
+        file_path = os.path.abspath(file_path)  # Ensure consistent path resolution
+        file_link = str(request.url_for("view_file")) + f"?session_id={session_id}"
+
+        # 🔹 Save uploaded file
+        try:
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+        except Exception as e:
+            return JSONResponse(status_code=500, content={"error": f"Failed to save file: {str(e)}"})
+
+        #Covert PDF to Docx
+        if file.filename.lower().endswith(".pdf"):
+
+            working_file_name = f"{unique_id}_{Original_file_name}.docx"
+            output_path = os.path.join(UPLOAD_DIR, working_file_name)
+            cv = Converter(file_path)
+            cv.convert(output_path)
+            cv.close()
+
+            working_file_path = output_path
+            working_file_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        else:
+            working_file_name = original_stored_name
+            working_file_path = file_path
+            working_file_type = file.content_type
+
+        if file_path.lower().endswith(".docx"):
+            file_content = extract_text_from_docx(open(file_path, "rb").read())
+        elif file_path.lower().endswith(".pdf"):
+            file_content = extract_text_from_pdf(open(file_path, "rb").read())
+        else:
+            try:
+                file_content = open(file_path, "r", encoding="utf-8").read()
+            except Exception:
+                file_content = "[File uploaded, but not readable.]"
+
+    #Retrieve chat session
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
 
     #Generate chat history summary if it is not available 
@@ -249,7 +416,17 @@ async def chatContinue(message: str = Form(...), session_id: str = Form(...)):
 
     #Inject chat history and user message to the prompt
     chat_messages = get_chat_history(session_id, db)
-    chat_messages.append({"role": "user", "content": message})
+    if file and message:
+        chat_messages.append({"role": "user", "content": f"Lesson Plan:\n{file_content} \n"+message})
+        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}] \n"+message, file_link=file_link))
+        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
+    if file and not message:
+        chat_messages.append({"role": "user", "content": f"Lesson Plan:\n{file_content}"})
+        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
+        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
+    if message and not file:
+        chat_messages.append({"role": "user", "content": message})
+        db.add(Message(session_id=session_id, role="user", content=message))
 
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -257,16 +434,25 @@ async def chatContinue(message: str = Form(...), session_id: str = Form(...)):
     )
     api_response = response.choices[0].message.content
 
-    db.add(Message(session_id=session_id, role="user", content=message))
     db.add(Message(session_id=session_id, role="assistant", content=api_response))
-
+    if file:
+        chat_session.original_lesson = file_content 
+        chat_session.updated_lesson = file_content #Update lesson plan in db with uploaded file content
+        chat_session.file_name = file.filename
+        chat_session.file_path = file_path
+        chat_session.file_type = file.content_type
+        chat_session.working_file_name = working_file_name
+        chat_session.working_file_path = working_file_path
+        chat_session.working_file_type = working_file_type
+        chat_session.suggested_edits = json.dumps([])
+ 
     db.commit()
     db.close()
 
-    return {"response": api_response, "session_id": session_id}
+    return {"response": api_response, "session_id" :session_id}
 
 @app.post("/fileUpload")
-async def chatStart(request: Request, file: UploadFile = File(None), session_id: Optional[str] = Form(None)):
+async def fileUpload(request: Request, file: UploadFile = File(None), session_id: Optional[str] = Form(None)):
     db = SessionLocal()
     file_content=""
     #Extract content of the lesson plan
@@ -395,13 +581,20 @@ def view_file(session_id: str = Query(...)):
 @app.post("/updateLesson")
 async def update_lesson(session_id: str = Form(...), new_content: str = Form(...)):
     db = SessionLocal()
-    currentContent =""
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
-    if chat_session:
-        if chat_session.updated_lesson:
-            currentContent = chat_session.updated_lesson
-        else:
-            currentContent = chat_session.original_lesson
+    existing_edits = []
+    
+    if not chat_session:
+        return {"error": "Session not found"}
+    
+    if chat_session.updated_lesson:
+        currentContent = chat_session.updated_lesson
+    else:
+        currentContent = chat_session.original_lesson
+    
+    if chat_session.suggested_edits:
+        existing_edits = load_edits(chat_session)
+    
     if not chat_session.summary:
         summary = summarize_old_messages(session_id, db)
         if summary:
@@ -410,39 +603,87 @@ async def update_lesson(session_id: str = Form(...), new_content: str = Form(...
 
     #Update lesson plan by appending suggested content using LLM API
     chat_messages = get_chat_history(session_id, db)
-    chat_messages.append({"role": "user", "content": f"Update the lesson plan by integrating the new content - \n{new_content} in to the current lesson plan - \n{currentContent} appropriately preserving the pedagogical flow. In the response provide the full content of the updated lesson plan. At the start display Updated Lesson Plan as the heading. Do not include any additional texts in the response."})
+    chat_messages.append({"role": "user", "content": f'''Update the lesson plan by integrating the new content - \n{new_content} in to the current lesson plan - \n{currentContent} appropriately preserving the pedagogical flow. 
+                          In the response provide the full content of the updated lesson plan. Do not include any additional texts in the response.
+                          When adding new content start with "### EDI integration start.". Mention this in a new line.
+                          At the end of the new content mention "### EDI integration end." '''
+                          })
     response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=chat_messages
         )
-
     api_response = response.choices[0].message.content
-    db.add(Message(session_id=session_id, role="assistant", content=api_response))
-    chat_session.updated_lesson = api_response #Update updated lesson plan in db 
+    new_edit = extract_edi_section(api_response)
+    target_text = get_last_paragraph_before_edi(api_response)
+    clean_api_response = remove_edi_markers(api_response)
+
+    edit = {
+        "target_text": target_text,
+        "new_content": new_edit
+    }
+    existing_edits.append(edit)
+    save_edits(chat_session, existing_edits)
+    chat_session.updated_lesson = clean_api_response #Update updated lesson plan in db 
+    success_message = "Lesson plan updated successfully. The updated lesson preview is now available."
+    
+    full_update_message = f"{success_message}\n\n{clean_api_response}"
+    db.add(Message(session_id=session_id, role="assistant", content=full_update_message))
+    download_message = "You can download the updated lesson plan by clicking the “Download Lesson Plan” button in the right panel. \n\n Would you like further support with this lesson plan? You can request additional support by selecting a support option from the right panel or by describing your requirements directly in the chat. \n\n If you would like to integrate EDI principles into a different lesson plan, you can upload a new lesson plan at any time."    
+    db.add(Message(session_id=session_id, role="assistant", content=download_message))
+    
     db.commit()
     db.close()
-    return {"response": api_response, "session_id": session_id}
+
+    return {"response": full_update_message, "download_message": download_message, "session_id": session_id}
+
+@app.get("/previewLesson")
+def preview_lesson(session_id: str):
+    db = SessionLocal()
+    chat_session = db.query(ChatSession).filter_by(id=session_id).first()
+  
+    updated = chat_session.updated_lesson
+
+    # HTML preview
+    html = "<div style='font-family:Arial;line-height:1.6'>"
+    for line in updated.split("\n"):
+        if "💡EDI Content:" in line:
+            html += f"<div style='background:#fff3cd;padding:8px'>{line}</div>"
+        else:
+            html += f"<p>{line}</p>"
+    html += "</div>"
+
+    bot_message = "You can download the updated lesson plan by clicking the “Download Lesson Plan” button in the right panel. \n\n Would you like further support with this lesson plan? You can request additional support by selecting a support option from the right panel or by describing your requirements directly in the chat. \n\n If you would like to integrate EDI principles into a different lesson plan, you can upload a new lesson plan at any time."
+    db.close()
+    return {"html": html, "bot_message":bot_message, "session_id": session_id}
 
 #Download updated lesson plan functionality
 @app.get("/downloadLesson")
 def download_lesson(session_id: str = Query(...)):
     db = SessionLocal()
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
-    db.close()
-
-    if not chat_session or not chat_session.updated_lesson:
-        return JSONResponse(status_code=404, content={"error": "Updated lesson not found."})
+    
+    if not chat_session or not chat_session.working_file_path:
+        return JSONResponse(status_code=404, content={"error": "Working file path not found."})
 
     # Create a .docx document
-    doc = Document()
-    doc.add_heading("Updated Lesson Plan", level=1)
-    for line in chat_session.updated_lesson.split("\n"):
-        doc.add_paragraph(line)
+    doc = Document(chat_session.working_file_path)
+    edits = load_edits(chat_session)
+
+    if edits:
+        for e in edits:
+            for para in doc.paragraphs:
+                if e["target_text"] in para.text:
+                    insert_paragraph_after(
+                        para,
+                        f"💡 EDI Content: {e['new_content']}"
+                    )
+                    break
 
     # Save to in-memory stream
     file_stream = io.BytesIO()
     doc.save(file_stream)
     file_stream.seek(0)
+    db.close()
 
     return StreamingResponse(
         file_stream,
