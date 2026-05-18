@@ -316,8 +316,19 @@ async def chatStart(request: Request, file: UploadFile = File(None), session_id:
 
         api_response = response.choices[0].message.content
 
-        file_link = str(request.url_for("view_file")) + f"?session_id={session_id}"
-        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
+        # file_link = str(request.url_for("view_file")) + f"?session_id={session_id}"
+        # db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
+        
+        file_link_path = f"/viewFile?session_id={session_id}"
+        print(file_link_path)
+        db.add(Message(
+            session_id=session_id,
+            role="user",
+            content=f"📎 [View lesson plan: {file.filename}]",
+            file_link=file_link_path,
+            visible=True,
+        ))
+
         db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
         db.add(Message(session_id=session_id, role="assistant", content=api_response))
         chat_session.original_lesson = file_content #Update lesson plan in db with uploaded file content

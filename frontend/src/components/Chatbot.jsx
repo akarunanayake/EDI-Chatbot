@@ -326,6 +326,7 @@ return (
           className="flex-1 overflow-y-auto bg-white rounded p-4 mb-4"
         >
           {messages.map((msg, idx) => {
+
             const isLastBotMessage = msg.sender === "bot" && idx === messages.length - 1;
             const showUpdateButton = isLastBotMessage && updatePhrases.some(phrase =>
               msg.text.toLowerCase().includes(phrase)
@@ -344,12 +345,12 @@ return (
                   >
                     {msg.file_link ? (
                       <a
-                        href={msg.file_link}
+                        href={`${apiUrl}${msg.file_link}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-red-600 underline"
                       >
-                        {msg.text}
+                      {msg.text}
                       </a>
                     ) : (
                       msg.text
