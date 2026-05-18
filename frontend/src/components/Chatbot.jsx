@@ -1,8 +1,5 @@
-import { useState, useRef, useEffect } from "react";
-import { Plus } from "lucide-react";
-
-// Define the base API URL from the environment variable
-const apiUrl = import.meta.env.VITE_API_URL;
+import { useState, useRef , useEffect} from "react";
+import { Plus, Send } from "lucide-react";
 
 const Chatbot = () => {
   const [sessionFile, setSessionFile] = useState(null);
@@ -17,21 +14,49 @@ const Chatbot = () => {
   const [showFeedbackPopup, setShowFeedbackPopup] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
   const [feedbackProvider, setFeedbackProvider] = useState("");
+  const [pendingFile, setPendingFile] = useState(null);
+  const removePendingFile = () => setPendingFile(null);
+  const [options, setOptions] = useState([]);
+  const [updateLessonPlan, setUpdateLessonPlan] = useState(false);
+ // const userInput = useRef(null);
+  //const chatBoxRef = useRef(null);
+  //const hasInitialized = useRef(false);
+  const MAX_HEIGHT = 150; // px (~6–7 lines)
 
-  //The messages that need to be include in the assistance message to appear the update lesson plan button
-  const updatePhrases = [
-    "update your lesson plan",
-    "update the lesson plan",
-    "updating your lesson plan",
-  ];
+  const supportOptions = [
+    {
+      label: "Integrate EDI principles into my lesson plan",
+      value: "1",
+    },
+    {
+      label: "Include better examples or datasets",
+      value: "2",
+    },
+    {
+      label: "Design an EDI-integrated assignment",
+      value: "3",
+    },
+    {
+      label: "Include reflective questions",
+      value: "4",
+    },
+    {
+      label: "Evaluate lesson plan for EDI",
+      value: "5",
+    },
+    {
+      label: "Something else",
+      value: "6",
+    }
+  ]
 
+  const lessonPlanUploaded = !!sessionFile;
 //Start of a chat session
   const initializeChat = async () => {
     const formData = new FormData();
-
+    
     try {
-      // Use the apiUrl variable
-      const res = await fetch(`${apiUrl}/chatStart`, {
+      const res = await fetch("http://localhost:8000/chatStart", {
         method: "POST",
         body: formData,
       });
@@ -50,8 +75,7 @@ const Chatbot = () => {
   const fetchSessions = async () => {
     try {
       setLoadingSessions(true);
-      // Use the apiUrl variable
-      const res = await fetch(`${apiUrl}/sessions`);
+      const res = await fetch("http://localhost:8000/sessions");
       const data = await res.json();
       setSessions(data);
       setLoadingSessions(false);
@@ -64,8 +88,7 @@ const Chatbot = () => {
   //Fetch messges of the chat session selected from chat history
   const fetchMessages = async (id) => {
     try {
-      // Use the apiUrl variable
-      const res = await fetch(`${apiUrl}/sessionMessages?session_id=${id}`);
+      const res = await fetch(`http://localhost:8000/sessionMessages?session_id=${id}`);
       const data = await res.json();
       // Format messages to the frontend style
       const formatted = data.messages.map(m => ({
@@ -75,8 +98,8 @@ const Chatbot = () => {
       }));
       setMessages(formatted);
       setSessionId(id);
-      setSessionFile(data.file);
-    } catch (err) { // Corrected line: removed the underscore
+      setSessionFile(data.file)
+    } catch (err) {
       console.error("Failed to fetch session messages", err);
     }
   };
@@ -95,16 +118,20 @@ const Chatbot = () => {
   const appendMessage = (sender, text) => {
     setMessages((prev) => [...prev, { sender, text}]);
     setTimeout(() => {
-      if (chatBoxRef.current) {
-        chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
-      }
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
     }, 100);
   };
 
   //Trigger when upload a file
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
-    const formData = new FormData();
+     if (!file) return;
+
+    setPendingFile(file);
+
+    // allow selecting the same file again later
+    e.target.value = "";
+    /**const formData = new FormData();
     if (file) {
       setSessionFile(file); // Store for formData use
       appendMessage("user", `📎 Uploaded file: ${file.name}`);
@@ -112,138 +139,138 @@ const Chatbot = () => {
     }
     if (sessionId) {
       formData.append("session_id", sessionId);
-    }
+    } 
 
     try {
     setLoadingBot(true); //To appear "Thinking" icon
-    const endpoint = `${apiUrl}/fileUpload`;;
+    const endpoint = "http://localhost:8000/fileUpload";
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const ct = res.headers.get("content-type") || "";
-        const payload = ct.includes("application/json") ? await res.json() : await res.text();
-        throw new Error(`fileUpload failed: ${res.status} ${JSON.stringify(payload)}`);
-      }
-
-
+    const res = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+    });
       const data = await res.json();
       appendMessage("bot", data.response);
-      
-      // if (sessionId) {
-      //   const viewUrl = `${apiUrl}/viewFile?session_id=${sessionId}`;
-      //   appendMessage("user", `📎 View lesson plan: ${file.name}`, viewUrl);
-      // }
-
       setLoadingBot(false);//To disappear "Thinking" icon
       fetchSessions();
     } catch (err) {
       appendMessage("bot", "Error: Could not connect to chatbot API.");
       setLoadingBot(false);
-    }
+    }  */
+
   };
 
   //Trigger when click send
-  const handleSend = async () => {
+  const handleSend = async (e) => {
     const input = userInput.current.value.trim();
-    if (!input) return;
-
-    appendMessage("user", input);
-    userInput.current.value = "";
+    const file = pendingFile;
+    if (!input && !file) return;
 
     const formData = new FormData();
-    formData.append("message", input);
 
-    // If sessionId exists, it's a follow-up message
-    if (sessionId) {
+    if (file && input) {
+      setSessionFile(file); // Store for formData use
+      appendMessage("user", `📎 Uploaded file: ${file.name}`);
+      appendMessage("user", input);
+      formData.append("message", input);
+      formData.append("file", file);
+    }
+    else if (file && !input){
+      setSessionFile(file); // Store for formData use
+      appendMessage("user", `📎 Uploaded file: ${file.name}`);
+      formData.append("file", file);
+    }
+    else if(input && !file){
+      appendMessage("user", input);
+      formData.append("message", input);
+    } 
+     if (sessionId) {
       formData.append("session_id", sessionId);
-    }
-    if (!sessionFile) {
-      appendMessage("bot", "Please upload a lesson plan file before starting.");
-      return;
-    }
+    } 
+    userInput.current.value = "";
+    userInput.current.style.height = "auto";
+    userInput.current.style.overflowY = "hidden";
+    setPendingFile(null);
+    // If sessionId exists, it's a follow-up message
+   
+    /**if (!sessionFile) {
+        appendMessage("bot", "Please upload a lesson plan file before starting.");
+        return;
+    }*/
+    
 
     try {
-      setLoadingBot(true);
-      // Use the apiUrl variable
-      const endpoint = `${apiUrl}/chatContinue`;
+    setLoadingBot(true);
+    const endpoint = "http://localhost:8000/chatContinue";
 
-      const res = await fetch(endpoint, {
-        method: "POST",
-        body: formData,
-      });
+    const res = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+    });
       const data = await res.json();
       appendMessage("bot", data.response);
       setLoadingBot(false);
     } catch (err) {
       appendMessage("bot", "Error: Could not connect to chatbot API.");
       setLoadingBot(false);
-    }
+    }  
   };
+
+  //Trigger when click support option button
+  const handleOptionClick = async (opt) => {
+    appendMessage("user", `${opt.value}. ${opt.label}`)
+
+    setOptions([])
+
+    const formData = new FormData();
+    formData.append("session_id", sessionId);
+    formData.append("message", opt.value)
+
+     try {
+    setLoadingBot(true);
+    const endpoint = "http://localhost:8000/chatContinue";
+
+    const res = await fetch(endpoint, {
+      method: "POST",
+      body: formData,
+    });
+      const data = await res.json();
+      appendMessage("bot", data.response);
+      setLoadingBot(false);
+    } catch (err) {
+      appendMessage("bot", "Error: Could not connect to chatbot API.");
+      setLoadingBot(false);
+    }  
+  }
 
   //Trigger when click Update lesson plan
   const handleUpdateLesson = async () => {
-    const lastBotMsg = messages.filter((m) => m.sender === "bot").pop()?.text;
-    if (!lastBotMsg || !sessionId) return;
+    if (!lessonPlanUploaded || !sessionId) return;
 
+    const lastBotMsg = messages.filter(m => m.sender === "bot").pop()?.text;
     const formData = new FormData();
     formData.append("session_id", sessionId);
     formData.append("new_content", lastBotMsg);
 
-    // try {
-    //   setLoadingBot(true);
-    //   // Use the apiUrl variable
-    //   const res = await fetch(`${apiUrl}/updateLesson`, {
-    //     method: "POST",
-    //     body: formData,
-    //   });
-    //   const data = await res.json();
-    //   appendMessage("bot", data.response);
-    //   setLoadingBot(false);
-    // } catch (err) {
-    //   appendMessage("bot", "Error: Could not connect to chatbot API.");
-    //   setLoadingBot(false);
-    // }
-
     try {
-      setLoadingBot(true);
-      const res = await fetch(`${apiUrl}/updateLesson`, {
+        setLoadingBot(true);
+        const res = await fetch("http://localhost:8000/updateLesson", {
         method: "POST",
         body: formData,
-        // credentials: "include", // uncomment if your API uses cookies/sessions
       });
-
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`updateLesson failed: ${res.status} ${text}`);
-      }
-
-      // Be tolerant if server returns non-JSON
-      let data;
-      const ct = res.headers.get("content-type") || "";
-      if (ct.includes("application/json")) {
-        data = await res.json();
-      } else {
-        const text = await res.text();
-        data = { response: text };
-      }
-
-      appendMessage("bot", data.response ?? "Updated lesson plan.");
-    } catch (err) {
-      console.error("updateLesson error:", err);
-      appendMessage("bot", `Error: Could not connect to chatbot API. ${String(err.message || "")}`);
-    } finally {
+      const data = await res.json();
+      appendMessage("bot", data.response);
+      appendMessage("bot", data.download_message);
       setLoadingBot(false);
-    }
-
+    } catch (err) {
+      appendMessage("bot", "Error: Could not connect to chatbot API.");
+      setLoadingBot(false);
+    } 
   };
 
   //Initialize a new chat
   const handleNewChat = () => {
-    setMessages([]);
+    setMessages([])
     setSessionFile(null);
     setSessionId(null);
     if (userInput.current) userInput.current.value = "";
@@ -261,7 +288,7 @@ const Chatbot = () => {
   formData.append("feedbackProvider", feedbackProvider);
 
   try {
-    const res = await fetch(`${apiUrl}/submitFeedback`, {
+    const res = await fetch("http://localhost:8000/submitFeedback", {
       method: "POST",
       body: formData,
     });
@@ -277,203 +304,298 @@ const Chatbot = () => {
 };
 
 return (
-    <div className="w-screen h-screen flex flex-col md:flex-row">
-      {/* Left Panel */}
-      <div className="w-full md:w-1/5 bg-gray-100 p-4 border-b md:border-b-0 md:border-r overflow-y-auto">
+    <div className="w-screen h-screen flex bg-gray-50 overflow-hidden">
+      {/* LEFT SIDEBAR */}
+      <div className="w-[260px] bg-white border-r p-4 flex flex-col">
         <button
           onClick={handleNewChat}
-          className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
+          className="bg-blue-600 text-white py-2 rounded-md hover:bg-blue-700"
         >
           New Chat
         </button>
-        <br /><br />
-        <h2 className="text-lg font-semibold mb-4">Chat History</h2>
-        {loadingSessions ? (
-          <div className="text-gray-500 text-sm animate-pulse">
-            Loading sessions...
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {sessions.length === 0 && <li>No sessions yet</li>}
-            {sessions.map((sess, idx) => (
-              <li
+
+        <h2 className="mt-6 mb-3 font-semibold text-gray-700">
+          Chat History
+        </h2>
+
+        <div className="flex-1 overflow-y-auto space-y-2">
+          {loadingSessions ? (
+            <div className="text-sm text-gray-500 animate-pulse">
+              Loading sessions...
+            </div>
+          ) : sessions.length === 0 ? (
+            <div className="text-sm text-gray-500">No sessions yet</div>
+          ) : (
+            sessions.map((sess, idx) => (
+              <div
                 key={sess.id}
                 onClick={() => fetchMessages(sess.id)}
-                className={`p-2 rounded cursor-pointer hover:bg-gray-200 ${
-                  sess.id === sessionId ? "bg-blue-300 font-bold" : "bg-white"
+                className={`p-3 rounded-lg cursor-pointer border transition ${
+                  sess.id === sessionId
+                    ? "bg-blue-100 border-blue-300"
+                    : "bg-white hover:bg-gray-100"
                 }`}
               >
-                Session {idx + 1} <br />
-                <small>{new Date(sess.created_at).toLocaleString()}</small>
-                <br />
-                <small className="italic text-xs">
+                <div className="font-medium text-sm">
+                  Session {idx + 1}
+                </div>
+
+                <div className="text-xs text-gray-500 mt-1">
+                  {new Date(sess.created_at).toLocaleString()}
+                </div>
+
+                <div className="text-xs italic text-gray-600 mt-2">
                   {sess.lesson_preview || sess.summary || "No preview"}
-                </small>
-              </li>
-            ))}
-          </ul>
-        )}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
-      {/* Chat Window */}
-      <div className="w-full md:w-4/5 flex flex-col p-4">
-        <div className="mb-4 text-center">
-          <p className="text-xl font-semibold text-gray-800">Welcome to GenEDIt</p>
+      {/* CENTER CHAT AREA */}
+      <div className="flex-1 flex flex-col">
+        {/* HEADER */}
+        <div className="bg-white border-b px-6 py-4">
+          <h1 className="text-2xl font-bold text-gray-800 text-center">
+            GenEDIt
+          </h1>
         </div>
 
+        {/* CHAT MESSAGES */}
         <div
           ref={chatBoxRef}
-          className="flex-1 overflow-y-auto bg-white rounded p-4 mb-4"
+          className="flex-1 overflow-y-auto p-6 space-y-4"
         >
-          {messages.map((msg, idx) => {
-
-            const isLastBotMessage = msg.sender === "bot" && idx === messages.length - 1;
-            const showUpdateButton = isLastBotMessage && updatePhrases.some(phrase =>
-              msg.text.toLowerCase().includes(phrase)
-            );
-            const showDownloadButton = isLastBotMessage && msg.text.toLowerCase().includes("updated lesson plan");
-
-            return (
-              <div key={idx} className="mb-2">
-                <div className={`flex ${msg.sender === "user" ? "justify-end" : "justify-start"}`}>
-                  <div
-                    className={`px-4 py-2 rounded-lg max-w-[80%] text-sm whitespace-pre-wrap ${
-                      msg.sender === "user"
-                        ? "bg-blue-600 text-white"
-                        : "bg-gray-100 text-gray-800"
-                    }`}
-                  >
-                    {msg.file_link ? (
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              className={`flex ${
+                msg.sender === "user"
+                  ? "justify-end"
+                  : "justify-start"
+              }`}
+            >
+              <div
+                className={`max-w-[80%] px-4 py-3 rounded-2xl whitespace-pre-wrap text-sm shadow-sm ${
+                  msg.sender === "user"
+                    ? "bg-blue-600 text-white"
+                    : "bg-white border text-gray-800"
+                }`}
+              >
+               {msg.file_link ? (
                       <a
-                        href={`${apiUrl}${msg.file_link}`}
+                        href={msg.file_link}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-red-600 underline"
                       >
-                      {msg.text}
+                        {msg.text}
                       </a>
                     ) : (
                       msg.text
                     )}
-                  </div>
-                </div>
-
-                {showUpdateButton && (
-                  <div className="flex justify-end mt-1">
-                    <button
-                      onClick={handleUpdateLesson}
-                      className="bg-green-500 text-white px-3 py-1 text-xs rounded hover:bg-green-600 shadow-md"
-                    >
-                      ✅ Update Lesson Plan
-                    </button>
-                  </div>
-                )}
-
-                {showDownloadButton && (
-                  <div>
-                    <div className="flex justify-end items-center mt-1 space-x-2">
-                      <a
-                        // Use the apiUrl variable for the download link
-                        href={`${apiUrl}/downloadLesson?session_id=${sessionId}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="bg-purple-600 text-white px-3 py-1 text-xs rounded hover:bg-purple-700 shadow-md"
-                      >
-                        📥 Download .docx
-                      </a>
-                    </div>
-                    <div className="w-full flex justify-center mt-2">
-                      <p className="text-sm text-gray-600 italic">
-                        Is there anything else I can assist you with?
-                      </p>
-                    </div>
-                  </div>
-                )}
               </div>
-            );
-          })}
+            </div>
+          ))}
+
           {loadingBot && (
-            <div className="flex justify-start mb-2">
-              <div className="px-4 py-2 rounded-lg bg-gray-100 text-gray-800 text-sm animate-pulse">
+            <div className="flex justify-start">
+              <div className="bg-white border px-4 py-3 rounded-2xl text-sm animate-pulse">
                 ✨ Thinking...
               </div>
             </div>
           )}
         </div>
 
-        {/* Input Area */}
-        <div className="flex items-center gap-2">
-          <label className="cursor-pointer relative">
-            <Plus className="w-6 h-6 text-gray-600" />
-            <input
-              type="file"
-              accept=".pdf,.docx"
-              className="absolute inset-0 opacity-0"
-              onChange={handleFileChange}
-            />
-          </label>
+        {/* INPUT AREA */}
+        <div className="bg-white border-t p-4">
+          <div className="border rounded-xl px-3 py-3 bg-white focus-within:ring-2 focus-within:ring-blue-500">
+            {/* Pending file */}
+            {pendingFile && (
+              <div className="mb-3 flex items-center">
+                <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100 border text-sm">
+                  <span>📎 {pendingFile.name}</span>
 
-          <input
-            type="text"
-            placeholder="Type your message..."
-            ref={userInput}
-            onKeyDown={(e) => e.key === "Enter" && handleSend()}
-            className="flex-1 border border-gray-300 rounded-md px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <button
-            onClick={handleSend}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-          >
-            Send
-          </button>
+                  <button
+                    onClick={() => setPendingFile(null)}
+                    className="text-gray-500 hover:text-gray-700"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-end gap-2">
+              {/* Upload */}
+              <label className="cursor-pointer p-2">
+                <Plus className="w-6 h-6 text-gray-600" />
+
+                <input
+                  type="file"
+                  accept=".pdf,.docx"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+              </label>
+
+              {/* Textarea */}
+              <textarea
+                ref={userInput}
+                rows={1}
+                placeholder="Type your message..."
+                className="flex-1 resize-none focus:outline-none px-2 py-1"
+                onInput={(e) => {
+                  const el = e.target;
+
+                  el.style.height = "auto";
+
+                  if (el.scrollHeight <= MAX_HEIGHT) {
+                    el.style.height = `${el.scrollHeight}px`;
+                    el.style.overflowY = "hidden";
+                  } else {
+                    el.style.height = `${MAX_HEIGHT}px`;
+                    el.style.overflowY = "auto";
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+              />
+
+              {/* Send */}
+              <button
+                onClick={handleSend}
+                className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700"
+              >
+                <Send className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT ACTION PANEL */}
+      <div className="w-[320px] bg-white border-l p-4 flex flex-col gap-6 overflow-y-auto">
+        {/* Support Options */}
+        <div className="border rounded-2xl p-4 shadow-sm">
+          <h2 className="font-semibold text-gray-800 mb-4">
+            Support Options
+          </h2>
+
+          <div className="space-y-2">
+            {supportOptions.map((opt) => (
+              <button
+                key={opt.value}
+                disabled={!lessonPlanUploaded}
+                onClick={() => handleOptionClick(opt)}
+                className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition ${
+                  lessonPlanUploaded
+                    ? "bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
+                    : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                }`}
+              >
+                {opt.value}. {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="border rounded-2xl p-4 shadow-sm">
+          <h2 className="font-semibold text-gray-800 mb-4">
+            Actions
+          </h2>
+
+          <div className="space-y-3">
+            <button
+              disabled={!lessonPlanUploaded}
+              onClick={handleUpdateLesson}
+              className={`w-full py-2 rounded-lg text-sm transition ${
+                lessonPlanUploaded
+                  ? "bg-green-600 hover:bg-green-700 text-white"
+                  : "bg-gray-200 text-gray-400 cursor-not-allowed"
+              }`}
+            >
+              ✅ Update Lesson Plan
+            </button>
+
+            <a
+              href={
+                lessonPlanUploaded
+                  ? `http://localhost:8000/downloadLesson?session_id=${sessionId}`
+                  : undefined
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`block text-center py-2 rounded-lg text-sm transition ${
+                lessonPlanUploaded
+                  ? "bg-purple-600 hover:bg-purple-700 text-white"
+                  : "bg-gray-200 text-gray-400 pointer-events-none"
+              }`}
+            >
+              📥 Download Lesson Plan
+            </a>
+          </div>
+        </div>
+
+        {/* Feedback */}
+        <div>
           <button
             onClick={() => setShowFeedbackPopup(true)}
-            className="bg-gray-600 text-white px-4 py-2 rounded-md hover:bg-gray-700"
+            className="w-full bg-gray-700 hover:bg-gray-800 text-white py-2 rounded-lg"
           >
             Send Feedback
           </button>
         </div>
       </div>
 
-      {/* Feedback Popup */}
+      {/* FEEDBACK POPUP */}
       {showFeedbackPopup && (
-        <div className="fixed inset-0 bg-black bg-opacity-40 flex justify-center items-center z-50">
-    <div className="bg-white p-8 rounded-xl shadow-xl w-[600px] max-w-full">
-      <h2 className="text-2xl font-semibold mb-4 text-center text-gray-800">
-        Send Feedback
-      </h2>
-      <input
-            type="text"
-            placeholder="Your name"
-            value={feedbackProvider}
-            onChange={(e) => setFeedbackProvider(e.target.value)}
-            className="flex-1 border border-gray-300 rounded-md px-3 py-2"
-      />
-      <br/><br/>
-      <textarea
-        className="w-full h-48 border border-gray-300 rounded-lg p-4 text-base"
-        value={feedbackText}
-        onChange={(e) => setFeedbackText(e.target.value)}
-        placeholder="Your feedback..."
-      />
-      <div className="flex justify-end space-x-3 mt-4">
-        <button
-          onClick={() => setShowFeedbackPopup(false)}
-          className="px-5 py-2 bg-gray-300 text-gray-800 rounded-md hover:bg-gray-400 transition"
-        >
-          Cancel
-        </button>
-        <button
-          onClick={submitFeedback}
-          className="px-5 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition"
-        >
-          Send
-        </button>
-      </div>
+        <div className="fixed inset-0 bg-black/40 flex justify-center items-center z-50">
+          <div className="bg-white w-[600px] max-w-full rounded-2xl shadow-2xl p-8">
+            <h2 className="text-2xl font-semibold mb-6 text-center">
+              Send Feedback
+            </h2>
+
+            <input
+              type="text"
+              placeholder="Your name"
+              value={feedbackProvider}
+              onChange={(e) => setFeedbackProvider(e.target.value)}
+              className="w-full border rounded-lg px-4 py-2 mb-4"
+            />
+
+            <textarea
+              value={feedbackText}
+              onChange={(e) => setFeedbackText(e.target.value)}
+              placeholder="Your feedback..."
+              className="w-full h-48 border rounded-lg p-4"
+            />
+
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowFeedbackPopup(false)}
+                className="px-5 py-2 rounded-lg bg-gray-300 hover:bg-gray-400"
+              >
+                Cancel
+              </button>
+
+              <button
+                onClick={submitFeedback}
+                className="px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Send
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
-  </div>
-  )}
-  </div>
   );
 };
 
