@@ -1,5 +1,11 @@
 const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
+function joinApiPath(path) {
+  const normalizedPath = path.startsWith("/") ? path : `/${path}`;
+  const trimmedBase = API_BASE_URL.replace(/\/+$/, "");
+  return `${trimmedBase}${normalizedPath}`;
+}
+
 function normalizeError(error, fallbackMessage) {
   if (error instanceof Error && error.message) {
     return error;
@@ -26,7 +32,7 @@ async function parseResponse(response) {
 
 export async function apiGet(path) {
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`);
+    const response = await fetch(joinApiPath(path));
     return parseResponse(response);
   } catch (error) {
     throw normalizeError(error, "Network error. Please try again.");
@@ -35,7 +41,7 @@ export async function apiGet(path) {
 
 export async function apiPostJson(path, payload) {
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(joinApiPath(path), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
@@ -48,7 +54,7 @@ export async function apiPostJson(path, payload) {
 
 export async function apiPostForm(path, formData) {
   try {
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+    const response = await fetch(joinApiPath(path), {
       method: "POST",
       body: formData,
     });
@@ -59,5 +65,24 @@ export async function apiPostForm(path, formData) {
 }
 
 export function apiPath(path) {
-  return `${API_BASE_URL}${path}`;
+  return joinApiPath(path);
+}
+
+export function resolveBackendFileLink(fileLink) {
+  if (!fileLink) {
+    return fileLink;
+  }
+
+  try {
+    const parsed = new URL(fileLink, API_BASE_URL);
+    const normalizedPath = parsed.pathname.replace(/\/+$/, "");
+
+    if (normalizedPath !== "/viewFile") {
+      return fileLink;
+    }
+
+    return joinApiPath(`/viewFile${parsed.search}`);
+  } catch {
+    return fileLink;
+  }
 }

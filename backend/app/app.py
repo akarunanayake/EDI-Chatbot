@@ -40,6 +40,25 @@ import logging
 from pdf2docx import Converter
 from urllib.parse import urlencode
 
+
+def build_view_file_link(request: Request, session_id: str, file_kind: str, file_id: str) -> str:
+    params = urlencode(
+        {
+            "session_id": session_id,
+            "file_kind": file_kind,
+            "file_id": file_id,
+        }
+    )
+
+    # In deployed setups behind Nginx, set PUBLIC_API_BASE to /api (or full API URL).
+    public_api_base = (os.getenv("PUBLIC_API_BASE") or "").strip().rstrip("/")
+    if public_api_base:
+        if public_api_base.startswith("http://") or public_api_base.startswith("https://") or public_api_base.startswith("/"):
+            return f"{public_api_base}/viewFile?{params}"
+        return f"/{public_api_base}/viewFile?{params}"
+
+    return f"{request.url_for('view_file')}?{params}"
+
 #Load OpenAI API key
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -252,7 +271,12 @@ def chatContinue(
 
         if current_type == "lesson_plan":
             uploaded_contexts.append(f"Lesson Plan:\n{file_content}")
-            file_link = f"{request.url_for('view_file')}?{urlencode({'session_id': session_id, 'file_kind': 'lesson_plan', 'file_id': str(unique_id)})}"
+            file_link = build_view_file_link(
+                request=request,
+                session_id=session_id,
+                file_kind="lesson_plan",
+                file_id=str(unique_id),
+            )
             db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
             db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
 
@@ -268,7 +292,12 @@ def chatContinue(
             chat_session.suggested_edits = json.dumps([])
         else:
             uploaded_contexts.append(f"Supporting Document:\n{file_content}")
-            file_link = f"{request.url_for('view_file')}?{urlencode({'session_id': session_id, 'file_kind': 'supporting_document', 'file_id': str(unique_id)})}"
+            file_link = build_view_file_link(
+                request=request,
+                session_id=session_id,
+                file_kind="supporting_document",
+                file_id=str(unique_id),
+            )
             db.add(Message(session_id=session_id, role="user", content=f"📎 [View supporting document: {file.filename}]", file_link=file_link))
             db.add(Message(session_id=session_id, role="user", content=f"Supporting Document:\n{file_content}", visible=False))
 
