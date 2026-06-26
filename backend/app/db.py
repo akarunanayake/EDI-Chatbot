@@ -11,6 +11,17 @@ DB_PASSWORD = os.getenv('DB_PASSWORD', 'local')
 DB_PORT = os.getenv('DB_PORT', '3306')
 
 DATABASE_URL = f'mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
-engine = create_engine(DATABASE_URL)
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 SessionLocal = sessionmaker(bind=engine)
+
+
+def get_db():
+	db = SessionLocal()
+	try:
+		yield db
+	except Exception:
+		db.rollback()
+		raise
+	finally:
+		db.close()
 
