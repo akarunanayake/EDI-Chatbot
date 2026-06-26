@@ -1,3 +1,5 @@
+import { resolveBackendFileLink } from "../api/client";
+
 const ChatMessages = ({
   chatBoxRef,
   messages,
@@ -38,7 +40,7 @@ const ChatMessages = ({
             >
               {msg.file_link ? (
                 <a
-                  href={msg.file_link}
+                  href={resolveBackendFileLink(msg.file_link)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-red-600 underline"
