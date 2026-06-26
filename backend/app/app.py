@@ -1,31 +1,49 @@
-from fastapi import FastAPI, Request, Form, UploadFile, File, Query
+from fastapi import FastAPI, Request, Form, UploadFile, File, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI
 import os
 from dotenv import load_dotenv
 from uuid import uuid4
-from fastapi.responses import JSONResponse
-from io import BytesIO
+from fastapi.responses import JSONResponse, FileResponse
 from docx import Document
-import fitz  # PyMuPDF
-from typing import Optional
+from typing import Optional, List
+from sqlalchemy.orm import Session
 from .init_db import init_db
-from .models import ChatSession, Message, Feedback
-from .db import SessionLocal
+from .models import ChatSession, Message, Feedback, User, SupportingDocument
+from .auth_utils import hash_password, parse_user_id, verify_password
+from .chat_utils import derive_session_preview, get_chat_history, summarize_old_messages
+from .db import get_db
+from .file_utils import (
+    build_inline_disposition,
+    collect_safe_candidate_paths,
+    ensure_filename_with_extension,
+    extract_edi_section,
+    extract_text_from_docx,
+    extract_text_from_pdf,
+    extract_text_from_xlsx,
+    first_existing_path,
+    get_last_paragraph_before_edi,
+    guess_media_type,
+    insert_paragraph_after,
+    load_edits,
+    paragraph_match_score,
+    remove_edi_markers,
+    save_edits,
+    sorted_prefixed_file_paths,
+)
+from .prompt_utils import SYSTEM_PROMPT
+from .schemas import AuthRequest, AuthResponse
 from fastapi.responses import StreamingResponse
-from docx import Document
 import io
-from fastapi import Request
 import json
+import logging
 from pdf2docx import Converter
-from docx.text.paragraph import Paragraph
-from docx.oxml import OxmlElement
-from docx.shared import RGBColor
-import re
+from urllib.parse import urlencode
 
 #Load OpenAI API key
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+logger = logging.getLogger(__name__)
 
 #Initialize DB
 init_db()
@@ -42,501 +60,275 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-#Define and initialize chatbot system prompt
-SYSTEM_PROMPT = (
-    '''You are an EDI advisor chatbot. Your role is to support educators in integrating Equity, Diversity, and Inclusion (EDI) principles into their ICT lessons. Draw on your knowledge of EDI in ICT education to offer thoughtful, practical, and constructive guidance.
-
-Begin the conversation by warmly introducing yourself as an EDI advisor. Invite the educator to ask any question related to EDI integration into their ICT lessons and remind them they can upload their lesson plans they’d like to enhance with EDI principles at anytime. 
-Also, mention that several support options and action buttons are available in the right panel to help educators integrate EDI principles into their lesson plans, and that these become available after a lesson plan is uploaded.
-
-When offering support, apply the following guiding principles:
- 1. Strong Equity
-Provide suggestions with a focus on strong equity, including:
-• Recognition: Validate the lived experiences and knowledge of marginalized groups.
-• Representation: Ensure students from diverse backgrounds are visible in content, examples, and discourse.
-• Reframing: Challenge deficit narratives and stereotypes using inclusive language and critical reflection.
-
- 2. Universal Design for Learning (UDL)
-Apply UDL principles, especially those supporting emotional capacity:
-• Embed empathy and restorative practices into learning activities.
-• Use strategies that foster perspective-taking, relational awareness, and community trust.
-• Design tasks that allow for multiple formats of expression and support safe academic risk-taking.
-
- 3. Social Constructivist Learning
-Promote collaborative learning and distributed expertise:
-• Encourage peer interaction and co-construction of knowledge.
-• Include content that raises awareness of different social groups to challenge assumptions.
-• Use open-ended tasks that invite diverse perspectives and lived experiences.
-
- 4. Teacher and Institutional Practice Awareness
-Be mindful of hidden curriculum and institutional norms:
-• Include diverse representation in texts, examples, and references.
-• Avoid reinforcing dominant cultural norms or stereotypes.
-• Design activities that disrupt bias and foster critical empathy.
-
- Design Requirements
-• Offer multiple modes of engagement (e.g., visual, oral, written, experiential).
-• Provide flexibility in how students demonstrate understanding.
-• Use inclusive language and prompts that invite varied viewpoints.
-• Include feedback mechanisms that are empathetic, growth-oriented, and restorative.
-Where appropriate, integrate data or insights about different social groups to build awareness and counter deficit thinking.
-
-Lesson Plan Upload Handling
-
-If the educator uploads a lesson plan along with their own requirements, provide assistance accordingly.
-
-If the educator uploads a lesson plan without their own request:
-• Acknowledge the upload;
-• Briefly summarise the lesson topic or context;
-• Briefly mention that EDI support can be provided for the lesson;
-• Then ask how they would like support.
-
-Do not immediately provide detailed support suggestions, examples, or multiple support recommendations unless the educator specifically asks for them.
-
-After the acknowledgement and brief summary, guide the educator by asking them to either:
-• select one of the available support options from the right panel;
-• or explain their specific requirements or goals in the chat.
-
-Avoid repeating or paraphrasing multiple support options conversationally as the interface already presents them separately.
-
-The  support options are as follows:
-
-1. I want to integrate EDI principles into this lesson plan.
-2. I want to include better examples or datasets that reflect EDI principles.
-3. I want to design an EDI-integrated assignment for this lesson.
-4. I want to include reflective questions to help students think about EDI in this lesson.
-5. I want to evaluate my lesson plan in terms of how well it addresses EDI principles.
-6. Something else.
-
-These options are primarily represented through the interface and do not need to be reproduced conversationally unless specifically requested.
-
-If the educator selects a numbered option, respond with relevant insights, suggestions, or resources tailored to their choice. If they select “6” ask them to describe their specific needs or goals.
-
-Conversation Flow and Follow-up Guidance
-Throughout the conversation:
-
-Use a supportive, conversational tone.
-
-Guide the educator with questions or prompts appropriate to their context.
-
-Offer explanations, examples, or ideas suited to their level of experience with EDI.
-
-If the educator seems unsure or stuck, suggest possible directions or ask clarifying questions.
-
-If they enter an unrecognized input, gently prompt them to choose from the available options or rephrase their request.
-
-Refer to the right panel or action buttons only when contextually relevant. Do not repeatedly mention interface controls in every response.
-
-After meaningfully completing a support response, you may remind educators that additional support options are available in the right panel.
-
-
-Follow-up After Suggestions
-After suggesting new content—such as examples, datasets, assignments, reflective questions, or learning activities, 
-ask context-appropriate follow-up questions that help the educator reflect, refine, or move forward. These follow-up prompts should:
-
-Encourage adaptation, integration, or deeper thinking;
-
-Support decision-making about incorporating the suggestion;
-
-Align with the educator’s original intent and lesson context;
-
-Be supportive and conversational in tone.
-
-At any point do not limit yourself only to the specifically mentioned follow-up question; 
-including that question, include other relevant follow-up questions as well, according to the provided instructions.
-
-Lesson Plan Update Behaviour
-
-When you provide content that can be directly added to the educator’s lesson plan — such as activities, examples, datasets, assignments, reflective questions, rewritten lesson content, or EDI integration suggestions — ask whether they would like to “update the lesson plan”.
-
-Only suggest using the “Update Lesson Plan” action when the generated content can be directly incorporated into the lesson plan.
-
-If you ask whether the educator would like to update the lesson plan, ask them to click the “Update Lesson Plan” button in the right panel to update lesson plan.
-
-Special Handling
-If the educator chooses Option 2 (datasets/examples):
-
-If only suggestions for improvement are offered, follow up by asking:
-“Would you like to craft a sample dataset that reflects these principles?”
-
-Only ask to "update the lesson plan" if a dataset or specific content has been generated.
-
-If the educator chooses Option 4 (reflective questions):
-
-After providing suggestions, ask whether they’d like to design an individual or group activity based on those questions.
-'''
-)
-
 #Initialize maximum number of messages in the chat history
 MAX_HISTORY = 20
 
-#Create folder to save lesson plan
+#Create folders to save lesson plans and supporting documents
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_DIR = os.path.join(BASE_DIR, "lessonPlans")
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+LESSON_PLANS_DIR = os.path.join(BASE_DIR, "lessonPlans")
+SUPPORTING_DOCS_DIR = os.path.join(BASE_DIR, "supportingDocuments")
+os.makedirs(LESSON_PLANS_DIR, exist_ok=True)
+os.makedirs(SUPPORTING_DOCS_DIR, exist_ok=True)
 
-#Check write permission (helps detect permission issues in deployed version)
-if not os.access(UPLOAD_DIR, os.W_OK):
-    print(f"Warning: Upload directory may not be writable: {UPLOAD_DIR}")
+#Check write permissions (helps detect permission issues in deployed version)
+if not os.access(LESSON_PLANS_DIR, os.W_OK):
+    print(f"Warning: Lesson Plans directory may not be writable: {LESSON_PLANS_DIR}")
+if not os.access(SUPPORTING_DOCS_DIR, os.W_OK):
+    print(f"Warning: Supporting Documents directory may not be writable: {SUPPORTING_DOCS_DIR}")
 
-#Functions to extract text from the uploaded lesson plan
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    doc = Document(BytesIO(file_bytes))
-    return "\n".join(para.text for para in doc.paragraphs)
+@app.post("/register", response_model=AuthResponse)
+def register(payload: AuthRequest, db: Session = Depends(get_db)):
+    username = payload.username.strip()
+    password = payload.password
+    if not username.strip() or not password:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Username and password are required."})
 
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    text = ""
-    with fitz.open(stream=file_bytes, filetype="pdf") as pdf:
-        for page in pdf:
-            text += page.get_text()
-    return text
+    existing_user = db.query(User).filter(User.username == username).first()
+    if existing_user:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Username already exists."})
 
-# Summarize older messages if available
+    password_hash = hash_password(password)
+    user = User(username=username, password_hash=password_hash)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
 
-def summarize_old_messages(session_id: str, db):
-    all_messages = db.query(Message).filter_by(session_id=session_id).order_by(Message.timestamp).all()
-    if len(all_messages) <= MAX_HISTORY:
-        return None
-    early_messages = all_messages[:-MAX_HISTORY]
-    prompt = [
-        {"role": "system", "content": "You are summarizing a conversation between an educator and an EDI advisor. Provide a brief summary of the conversation so far."},
-        *[{"role": m.role, "content": m.content} for m in early_messages]
-    ]
-    summary_response = client.chat.completions.create(model="gpt-4.1-mini", messages=prompt)
-    return summary_response.choices[0].message.content
-
-#Send chat history
-def get_chat_history(session_id: str, db):
-    session = db.query(ChatSession).filter_by(id=session_id).first()
-    history = db.query(Message).filter_by(session_id=session_id).order_by(Message.timestamp).all()
-    messages = [{"role": m.role, "content": m.content} for m in history][-MAX_HISTORY:]
-
-    system_prompt_present = any(
-        m["role"] == "system" and SYSTEM_PROMPT in m["content"]
-        for m in messages
-    )
-
-    #Inject system prompt if missing
-    if not system_prompt_present:
-        messages.insert(0, {
-            "role": "system",
-            "content": SYSTEM_PROMPT  
-    })
-
-    # Check if original lesson is referenced
-    lesson_present = any(
-        session.original_lesson.strip()[:100] in m["content"]
-        for m in messages
-    ) if session and session.original_lesson else False
-
-    if session and session.original_lesson and not lesson_present:
-        messages.insert(1, {
-            "role": "user",
-            "content": f"The original lesson plan for this conversation is:\n{session.original_lesson}"
-        })
-
-    #Inject chat history summary if available
-    if session and session.summary:
-        messages.insert(1, {
-            "role": "system",
-            "content": f"Summary of earlier conversation: {session.summary}"
-        })
-
-    return messages
-
-def load_edits(session):
-    try:
-        return json.loads(session.suggested_edits or "[]")
-    except:
-        return []
+    return {"success": True, "user_id": user.id, "username": user.username}
 
 
-def save_edits(session, edits):
-    session.suggested_edits = json.dumps(edits)
+@app.post("/login", response_model=AuthResponse)
+def login(payload: AuthRequest, db: Session = Depends(get_db)):
+    username = payload.username.strip()
+    password = payload.password
+    if not username.strip() or not password:
+        return JSONResponse(status_code=400, content={"success": False, "message": "Username and password are required."})
 
-def insert_paragraph_after(paragraph, text=None, style=None):
-    new_p = OxmlElement("w:p")
-    paragraph._p.addnext(new_p)
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not verify_password(password, user.password_hash):
+        return JSONResponse(status_code=401, content={"success": False, "message": "Invalid username or password."})
 
-    new_para = Paragraph(new_p, paragraph._parent)
-
-    if text:
-        run = new_para.add_run(text)
-
-        # Manual formatting
-        run.bold = True
-        run.italic = False
-
-        # Dark blue text
-        run.font.color.rgb = RGBColor(0, 51, 102)
-
-    return new_para
-
-def extract_edi_section(text: str):
-    match = re.search(
-        r"### EDI integration start\.\s*(.*?)\s*### EDI integration end\.",
-        text,
-        re.DOTALL
-    )
-    
-    if match:
-        return match.group(1).strip()
-    return None
-
-def get_last_sentence_before_edi(text: str):
-    marker = "### EDI integration start."
-
-    if marker not in text:
-        return None
-
-    before_edi = text.split(marker)[0].strip()
-
-    # Split into sentences (simple but effective for most lesson plans)
-    sentences = re.split(r'(?<=[.!?])\s+', before_edi)
-
-    # Get last non-empty sentence
-    for s in reversed(sentences):
-        if s.strip():
-            return s.strip()
-
-    return None
-
-def get_last_paragraph_before_edi(text: str):
-    marker = "### EDI integration start."
-
-    if marker not in text:
-        return None
-
-    before = text.split(marker)[0].strip()
-
-    paragraphs = [p.strip() for p in before.split("\n") if p.strip()]
-
-    return paragraphs[-1] if paragraphs else None
-
-def remove_edi_markers(text: str):
-    text = text.replace("### EDI integration start.", "")
-    text = text.replace("### EDI integration end.", "")
-    return text
-
-def supportOptions():
-    allOptions = [
-        {"label": "Integrate EDI principles into this lesson plan", "value": "1"},
-        {"label": "Include better examples or datasets", "value": "2"},
-        {"label": "Design an EDI-integrated assignment", "value": "3"},
-        {"label": "Include reflective questions", "value": "4"},
-        {"label": "Evaluate lesson plan for EDI", "value": "5"},
-        {"label": "Something else", "value": "6"}
-    ]
-
-    return allOptions
-
+    return {"success": True, "user_id": user.id, "username": user.username}
 
 @app.post("/chatStart")
-async def chatStart():
-    db = SessionLocal()
+def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
     session_id = str(uuid4())  # Create unique session ID
-
+    user_id_int = parse_user_id(user_id)
+    print(f"Starting new chat session: {session_id} for user_id: {user_id_int} (received: {user_id})")
     # Initiate conversation executing system prompt
-    db.add(ChatSession(id=session_id))
+    db.add(ChatSession(id=session_id, user_id=user_id_int))
     db.add(Message(session_id=session_id, role="system", content=SYSTEM_PROMPT, visible=False))
 
-    response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages= [{"role": "system", "content": SYSTEM_PROMPT}]
-        )
+    try:
+        response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages= [{"role": "system", "content": SYSTEM_PROMPT}]
+            )
+    except Exception:
+        logger.exception("OpenAI call failed while starting chat session %s", session_id)
+        return JSONResponse(status_code=502, content={"error": "Failed to start chat. Please try again."})
         
     api_response = response.choices[0].message.content
 
     db.add(Message(session_id=session_id, role="assistant", content=api_response))
     db.commit()
-    db.close()
 
     return {"response": api_response, "session_id" :session_id}
 
 @app.post("/chatContinue")
-async def chatContinue(request: Request, message: str = Form(None), session_id: str = Form(...), file: Optional[UploadFile] = File(None)):
+def chatContinue(
+    request: Request,
+    message: str = Form(None),
+    session_id: str = Form(...),
+    files: Optional[List[UploadFile]] = File(None),
+    file_tuples: str = Form("[]"),
+    db: Session = Depends(get_db),
+):
 
-    db = SessionLocal()
-    file_content=""
-    file_link=""
-    #Extract content of the lesson plan
-    if file and file is not None:
-        # 🔹 Use universal path (cross-platform)
-        Original_file_name = os.path.splitext(file.filename)[0]
-        original_ext = os.path.splitext(file.filename)[1]
-        unique_id = uuid4()
-        original_stored_name = f"{unique_id}_{Original_file_name}{original_ext}"
-        file_path = os.path.join(UPLOAD_DIR, original_stored_name)
-        file_path = os.path.abspath(file_path)  # Ensure consistent path resolution
-        file_link = str(request.url_for("view_file")) + f"?session_id={session_id}"
+    uploaded_files = files or []
+    file_type_by_index = {}
 
-        # 🔹 Save uploaded file
-        try:
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": f"Failed to save file: {str(e)}"})
-
-        #Covert PDF to Docx
-        if file.filename.lower().endswith(".pdf"):
-
-            working_file_name = f"{unique_id}_{Original_file_name}.docx"
-            output_path = os.path.join(UPLOAD_DIR, working_file_name)
-            cv = Converter(file_path)
-            cv.convert(output_path)
-            cv.close()
-
-            working_file_path = output_path
-            working_file_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-
-        else:
-            working_file_name = original_stored_name
-            working_file_path = file_path
-            working_file_type = file.content_type
-
-        if file_path.lower().endswith(".docx"):
-            file_content = extract_text_from_docx(open(file_path, "rb").read())
-        elif file_path.lower().endswith(".pdf"):
-            file_content = extract_text_from_pdf(open(file_path, "rb").read())
-        else:
-            try:
-                file_content = open(file_path, "r", encoding="utf-8").read()
-            except Exception:
-                file_content = "[File uploaded, but not readable.]"
+    # Parse tuple metadata: [[index, file_type, file_name], ...]
+    try:
+        parsed_tuples = json.loads(file_tuples or "[]")
+        for item in parsed_tuples:
+            if not isinstance(item, list) or len(item) < 2:
+                continue
+            idx = int(item[0])
+            current_type = item[1]
+            if current_type in ("lesson_plan", "supporting_document"):
+                file_type_by_index[idx] = current_type
+    except Exception:
+        file_type_by_index = {}
 
     #Retrieve chat session
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
+    if not chat_session:
+        return JSONResponse(status_code=404, content={"error": "Session not found."})
 
     #Generate chat history summary if it is not available 
     if not chat_session.summary:
-        summary = summarize_old_messages(session_id, db)
-        if summary:
-            chat_session.summary = summary #Set chat history summary to chat session
-            db.commit()
-
-    #Inject chat history and user message to the prompt
-    chat_messages = get_chat_history(session_id, db)
-    if file and message:
-        chat_messages.append({"role": "user", "content": f"Lesson Plan:\n{file_content} \n"+message})
-        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}] \n"+message, file_link=file_link))
-        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
-    if file and not message:
-        chat_messages.append({"role": "user", "content": f"Lesson Plan:\n{file_content}"})
-        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
-        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
-    if message and not file:
-        chat_messages.append({"role": "user", "content": message})
-        db.add(Message(session_id=session_id, role="user", content=message))
-
-    response = client.chat.completions.create(
-        model="gpt-4.1-mini",
-        messages=chat_messages
-    )
-    api_response = response.choices[0].message.content
-
-    db.add(Message(session_id=session_id, role="assistant", content=api_response))
-    if file:
-        chat_session.original_lesson = file_content 
-        chat_session.updated_lesson = file_content #Update lesson plan in db with uploaded file content
-        chat_session.file_name = file.filename
-        chat_session.file_path = file_path
-        chat_session.file_type = file.content_type
-        chat_session.working_file_name = working_file_name
-        chat_session.working_file_path = working_file_path
-        chat_session.working_file_type = working_file_type
-        chat_session.suggested_edits = json.dumps([])
- 
-    db.commit()
-    db.close()
-
-    return {"response": api_response, "session_id" :session_id}
-
-@app.post("/fileUpload")
-async def fileUpload(request: Request, file: UploadFile = File(None), session_id: Optional[str] = Form(None)):
-    db = SessionLocal()
-    file_content=""
-    #Extract content of the lesson plan
-    if file:
-        # 🔹 Use universal path (cross-platform)
-        unique_name = f"{uuid4()}_{file.filename}"
-        file_path = os.path.join(UPLOAD_DIR, unique_name)
-        file_path = os.path.abspath(file_path)  # Ensure consistent path resolution
-
-        # 🔹 Save uploaded file
         try:
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
-        except Exception as e:
-            return JSONResponse(status_code=500, content={"error": f"Failed to save file: {str(e)}"})
-
-
-        if file.filename.endswith(".docx"):
-            file_content = extract_text_from_docx(open(file_path, "rb").read())
-        elif file.filename.endswith(".pdf"):
-            file_content = extract_text_from_pdf(open(file_path, "rb").read())
-        else:
-            try:
-                file_content = open(file_path, "r", encoding="utf-8").read()
-            except Exception:
-                file_content = "[File uploaded, but not readable.]"
-
-        #Retrieve chat session
-        chat_session = db.query(ChatSession).filter_by(id=session_id).first()
-        if not chat_session:
-            return JSONResponse(status_code=400, content={"error": "Invalid session_id"})
-
-        if not chat_session.summary:
-            summary = summarize_old_messages(session_id, db)
+            summary = summarize_old_messages(session_id, db, client, MAX_HISTORY)
             if summary:
                 chat_session.summary = summary
                 db.commit()
+        except Exception:
+            logger.exception("Failed to summarize old messages for session %s", session_id)
 
-        #Set chat history and file content to the prompt
-        chat_messages = get_chat_history(session_id, db)
-        chat_messages.append({"role": "user", "content": f"Lesson Plan:\n{file_content}"})
+    #Inject chat history and user message to the prompt
+    try:
+        chat_messages = get_chat_history(session_id, db, SYSTEM_PROMPT, MAX_HISTORY)
+    except Exception:
+        logger.exception("Failed to build chat history for session %s", session_id)
+        return JSONResponse(status_code=500, content={"error": "Failed to build chat context."})
 
+    uploaded_contexts = []
+
+    for idx, file in enumerate(uploaded_files):
+        current_type = file_type_by_index.get(idx, "lesson_plan")
+        original_file_name = os.path.splitext(file.filename)[0].strip().rstrip(".") or "uploaded_file"
+        original_ext = os.path.splitext(file.filename)[1]
+        unique_id = uuid4()
+        original_stored_name = f"{unique_id}_{original_file_name}{original_ext}"
+
+        upload_dir = LESSON_PLANS_DIR if current_type == "lesson_plan" else SUPPORTING_DOCS_DIR
+        file_path = os.path.abspath(os.path.join(upload_dir, original_stored_name))
+        
+        try:
+            with open(file_path, "wb") as f:
+                f.write(file.file.read())
+        except Exception:
+            logger.exception("Failed to save uploaded file for session %s", session_id)
+            return JSONResponse(status_code=500, content={"error": "Failed to save uploaded file."})
+
+        working_file_name = original_stored_name
+        working_file_path = file_path
+        working_file_type = file.content_type
+
+        # Convert PDF to DOCX for lesson plans only
+        if current_type == "lesson_plan" and file.filename.lower().endswith(".pdf"):
+            working_file_name = f"{unique_id}_{original_file_name}.docx"
+            output_path = os.path.join(upload_dir, working_file_name)
+            try:
+                cv = Converter(file_path)
+                cv.convert(output_path)
+                cv.close()
+            except Exception:
+                logger.exception("Failed PDF to DOCX conversion for session %s", session_id)
+                return JSONResponse(status_code=400, content={"error": "Could not process uploaded PDF lesson plan."})
+            working_file_path = output_path
+            working_file_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+        # Extract context from the working file so update anchors align with
+        # the document used later for downloads (important for PDF->DOCX flow).
+        source_path = working_file_path
+        if source_path.lower().endswith(".docx"):
+            try:
+                with open(source_path, "rb") as f:
+                    file_content = extract_text_from_docx(f.read())
+            except Exception:
+                logger.exception("Failed to extract DOCX content for session %s", session_id)
+                file_content = "[File uploaded, but content extraction failed.]"
+        elif source_path.lower().endswith(".pdf"):
+            try:
+                with open(source_path, "rb") as f:
+                    file_content = extract_text_from_pdf(f.read())
+            except Exception:
+                logger.exception("Failed to extract PDF content for session %s", session_id)
+                file_content = "[File uploaded, but content extraction failed.]"
+        elif source_path.lower().endswith(".xlsx"):
+            try:
+                with open(source_path, "rb") as f:
+                    file_content = extract_text_from_xlsx(f.read())
+            except Exception:
+                logger.exception("Failed to extract XLSX content for session %s", session_id)
+                file_content = "[File uploaded, but content extraction failed.]"
+        else:
+            try:
+                with open(source_path, "r", encoding="utf-8") as f:
+                    file_content = f.read()
+            except Exception:
+                file_content = "[File uploaded, but not readable.]"
+
+        if current_type == "lesson_plan":
+            uploaded_contexts.append(f"Lesson Plan:\n{file_content}")
+            file_link = f"{request.url_for('view_file')}?{urlencode({'session_id': session_id, 'file_kind': 'lesson_plan', 'file_id': str(unique_id)})}"
+            db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
+            db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
+
+            # Update lesson plan in chat session using latest uploaded lesson plan
+            chat_session.original_lesson = file_content
+            chat_session.updated_lesson = file_content
+            chat_session.file_name = file.filename
+            chat_session.file_path = file_path
+            chat_session.file_type = file.content_type
+            chat_session.working_file_name = working_file_name
+            chat_session.working_file_path = working_file_path
+            chat_session.working_file_type = working_file_type
+            chat_session.suggested_edits = json.dumps([])
+        else:
+            uploaded_contexts.append(f"Supporting Document:\n{file_content}")
+            file_link = f"{request.url_for('view_file')}?{urlencode({'session_id': session_id, 'file_kind': 'supporting_document', 'file_id': str(unique_id)})}"
+            db.add(Message(session_id=session_id, role="user", content=f"📎 [View supporting document: {file.filename}]", file_link=file_link))
+            db.add(Message(session_id=session_id, role="user", content=f"Supporting Document:\n{file_content}", visible=False))
+
+            supporting_doc = SupportingDocument(
+                session_id=session_id,
+                document_name=file.filename,
+                file_path=file_path,
+                file_type=file.content_type
+            )
+            db.add(supporting_doc)
+
+    if uploaded_contexts and message:
+        chat_messages.append({"role": "user", "content": "\n\n".join(uploaded_contexts) + "\n" + message})
+        db.add(Message(session_id=session_id, role="user", content=message))
+    elif uploaded_contexts:
+        chat_messages.append({"role": "user", "content": "\n\n".join(uploaded_contexts)})
+    elif message and not uploaded_files:
+        chat_messages.append({"role": "user", "content": message})
+        db.add(Message(session_id=session_id, role="user", content=message))
+
+    try:
         response = client.chat.completions.create(
             model="gpt-4.1-mini",
             messages=chat_messages
         )
+    except Exception:
+        logger.exception("OpenAI call failed while continuing session %s", session_id)
+        return JSONResponse(status_code=502, content={"error": "Failed to generate assistant response."})
+    api_response = response.choices[0].message.content
 
-        api_response = response.choices[0].message.content
+    db.add(Message(session_id=session_id, role="assistant", content=api_response))
+    db.commit()
 
-        file_link = str(request.url_for("view_file")) + f"?session_id={session_id}"
-        db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
-        db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
-        db.add(Message(session_id=session_id, role="assistant", content=api_response))
-        chat_session.original_lesson = file_content #Update lesson plan in db with uploaded file content
-        chat_session.updated_lesson = file_content
-        chat_session.file_name = file.filename
-        chat_session.file_path = file_path
-        chat_session.file_type = file.content_type
-        db.commit()
+    return {"response": api_response, "session_id": session_id}
 
-        db.close()
-        return {"response": api_response, "session_id": session_id}
 
 #Retrieve chat sessions for chat history   
 @app.get("/sessions")
-def get_sessions():
-        db = SessionLocal()
-        sessions = db.query(ChatSession).filter(ChatSession.original_lesson.isnot(None)).order_by(ChatSession.created_at.desc()).all()
+def get_sessions(user_id: Optional[str] = Query(None), db: Session = Depends(get_db)):
+        query = db.query(ChatSession)
+        user_id_int = parse_user_id(user_id)
+        print(f"Fetching sessions for user_id: {user_id_int} (received: {user_id})")
+        if user_id_int is not None:
+            query = query.filter(ChatSession.user_id == user_id_int)
+
+        sessions = query.order_by(ChatSession.created_at.desc()).all()
         results = []
         for s in sessions:
+            preview = derive_session_preview(s.id, db)
             results.append({
                 "id": s.id,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
-                "summary": s.summary if s.summary else "",
-                "lesson_preview": (s.original_lesson[:100] + "...") if s.original_lesson else "",
+                "lesson_preview": preview,
             })
-        db.close()
         return JSONResponse(content=results)
 
 #Retrieve messages of the selected chat session from the chat history
 @app.get("/sessionMessages")
-def get_session_messages(session_id: str = Query(...)):
+def get_session_messages(session_id: str = Query(...), db: Session = Depends(get_db)):
     file = ""
-    db = SessionLocal()
     query = db.query(Message).filter_by(session_id=session_id)
     query = query.filter_by(visible=True)
     messages = query.order_by(Message.timestamp).all()
@@ -548,18 +340,153 @@ def get_session_messages(session_id: str = Query(...)):
             file = session.original_lesson
             
     results = [{"role": m.role, "content": m.content, "file_link": m.file_link} for m in messages]
-    db.close()
     return {"file": file, "messages": results}
 
-from fastapi.responses import FileResponse
+#Retrieve supporting documents for a session
+@app.get("/supportingDocs")
+def get_supporting_docs(session_id: str = Query(...), db: Session = Depends(get_db)):
+    supporting_docs = db.query(SupportingDocument).filter_by(session_id=session_id).order_by(SupportingDocument.uploaded_at.desc()).all()
+    results = [
+        {
+            "id": doc.id,
+            "document_name": doc.document_name,
+            "file_path": doc.file_path,
+            "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+        }
+        for doc in supporting_docs
+    ]
+    return {"supporting_docs": results}
+
+#Remove a supporting document
+@app.post("/removeSupportingDoc")
+def remove_supporting_doc(doc_id: int = Form(...), db: Session = Depends(get_db)):
+    supporting_doc = db.query(SupportingDocument).filter_by(id=doc_id).first()
+    
+    if not supporting_doc:
+        return JSONResponse(status_code=404, content={"error": "Document not found."})
+    
+    # Delete the file from storage
+    try:
+        if os.path.exists(supporting_doc.file_path):
+            os.remove(supporting_doc.file_path)
+    except Exception as e:
+        print(f"Warning: Could not delete file {supporting_doc.file_path}: {str(e)}")
+    
+    # Delete from database
+    db.delete(supporting_doc)
+    db.commit()
+    
+    return {"success": True, "message": "Supporting document removed."}
+
+
 
 #View uploaded lesson plan in chat history
 @app.get("/viewFile", name="view_file")
-def view_file(session_id: str = Query(...)):
-    db = SessionLocal()
+def view_file(
+    session_id: str = Query(...),
+    file_id: Optional[str] = Query(None),
+    stored_name: Optional[str] = Query(None),
+    file_kind: str = Query("lesson_plan"),
+    display_name: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
-    db.close()
 
+    # Preferred behavior for new links: resolve by immutable file UUID.
+    if file_id:
+        safe_id = (file_id or "").strip()
+        base_dir = LESSON_PLANS_DIR if file_kind == "lesson_plan" else SUPPORTING_DOCS_DIR
+        base_dir_abs = os.path.abspath(base_dir)
+
+        preferred_exts = [".pdf", ".docx", ".txt", ".csv", ".xlsx", ".xls", ".json"]
+        candidate_paths = sorted_prefixed_file_paths(
+            base_dir_abs,
+            f"{safe_id}_",
+            preferred_exts,
+        )
+        resolved_path = first_existing_path(candidate_paths)
+        if not resolved_path:
+            return JSONResponse(status_code=404, content={"error": "File missing on server."})
+
+        media_type = guess_media_type(resolved_path)
+
+        derived_name = os.path.basename(resolved_path).split("_", 1)[1] if "_" in os.path.basename(resolved_path) else os.path.basename(resolved_path)
+        response_name = ensure_filename_with_extension(display_name or derived_name, resolved_path)
+        resolved_ext = os.path.splitext(resolved_path)[1]
+        name_root, name_ext = os.path.splitext(response_name)
+        if resolved_ext and name_ext.lower() != resolved_ext.lower():
+            response_name = f"{name_root}{resolved_ext}"
+
+        return FileResponse(
+            path=resolved_path,
+            media_type=media_type,
+            filename=response_name,
+            headers={
+                "Content-Disposition": build_inline_disposition(response_name)
+            }
+        )
+
+    # Backward-compatible behavior: resolve old links by stored_name.
+    if stored_name:
+        safe_name = os.path.basename(stored_name)
+        sanitized_name = safe_name.strip().rstrip(".")
+        if safe_name != stored_name:
+            return JSONResponse(status_code=400, content={"error": "Invalid file reference."})
+
+        base_dir = LESSON_PLANS_DIR if file_kind == "lesson_plan" else SUPPORTING_DOCS_DIR
+        base_dir_abs = os.path.abspath(base_dir)
+        candidate_names = [safe_name]
+        if sanitized_name and sanitized_name not in candidate_names:
+            candidate_names.append(sanitized_name)
+
+        candidate_paths = collect_safe_candidate_paths(base_dir_abs, candidate_names)
+
+        # If exact name lookup fails (e.g. trailing-space normalization differences),
+        # resolve by immutable UUID prefix in the same folder only.
+        uuid_prefix = sanitized_name.split("_", 1)[0] if "_" in sanitized_name else ""
+        expected_ext = os.path.splitext(sanitized_name)[1].lower()
+        display_ext = os.path.splitext((display_name or "").strip())[1].lower()
+        if uuid_prefix:
+            preferred_exts = []
+            if expected_ext:
+                preferred_exts.append(expected_ext)
+            if display_ext and display_ext not in preferred_exts:
+                preferred_exts.append(display_ext)
+            if file_kind == "lesson_plan":
+                for ext in [".pdf", ".docx"]:
+                    if ext not in preferred_exts:
+                        preferred_exts.append(ext)
+
+            candidate_paths.extend(
+                sorted_prefixed_file_paths(
+                    base_dir_abs,
+                    f"{uuid_prefix}_",
+                    preferred_exts,
+                )
+            )
+
+        resolved_path = first_existing_path(candidate_paths)
+        if not resolved_path:
+            return JSONResponse(status_code=404, content={"error": "File missing on server."})
+
+        media_type = guess_media_type(resolved_path)
+
+        response_name = ensure_filename_with_extension(display_name or safe_name, resolved_path)
+        resolved_ext = os.path.splitext(resolved_path)[1]
+        name_root, name_ext = os.path.splitext(response_name)
+        if resolved_ext and name_ext.lower() != resolved_ext.lower():
+            response_name = f"{name_root}{resolved_ext}"
+
+        return FileResponse(
+            path=resolved_path,
+            media_type=media_type,
+            filename=response_name,
+            headers={
+                "Content-Disposition": build_inline_disposition(response_name)
+            }
+        )
+
+    # Legacy behavior: session-level file for old links without stored_name.
     if not chat_session or not chat_session.file_path:
         return JSONResponse(status_code=404, content={"error": "File not found."})
     
@@ -567,20 +494,25 @@ def view_file(session_id: str = Query(...)):
     if not os.path.exists(chat_session.file_path):
         return JSONResponse(status_code=404, content={"error": "File missing on server."})
 
+    legacy_name = ensure_filename_with_extension(chat_session.file_name, chat_session.file_path)
+    legacy_ext = os.path.splitext(chat_session.file_path)[1]
+    legacy_root, legacy_name_ext = os.path.splitext(legacy_name)
+    if legacy_ext and legacy_name_ext.lower() != legacy_ext.lower():
+        legacy_name = f"{legacy_root}{legacy_ext}"
+
     return FileResponse(
         path=chat_session.file_path,
-        media_type=chat_session.file_type,
-        filename=chat_session.file_name,
+        media_type=guess_media_type(chat_session.file_path),
+        filename=legacy_name,
         headers={
-            "Content-Disposition": f"inline; filename={chat_session.file_name}"
+            "Content-Disposition": build_inline_disposition(legacy_name)
         }
     )
 
 
 #Lesson plan update functionality
 @app.post("/updateLesson")
-async def update_lesson(session_id: str = Form(...), new_content: str = Form(...)):
-    db = SessionLocal()
+def update_lesson(session_id: str = Form(...), new_content: str = Form(...), db: Session = Depends(get_db)):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
     existing_edits = []
     
@@ -596,22 +528,33 @@ async def update_lesson(session_id: str = Form(...), new_content: str = Form(...
         existing_edits = load_edits(chat_session)
     
     if not chat_session.summary:
-        summary = summarize_old_messages(session_id, db)
-        if summary:
-            chat_session.summary = summary
-            db.commit()
+        try:
+            summary = summarize_old_messages(session_id, db, client, MAX_HISTORY)
+            if summary:
+                chat_session.summary = summary
+                db.commit()
+        except Exception:
+            logger.exception("Failed to summarize old messages for lesson update session %s", session_id)
 
     #Update lesson plan by appending suggested content using LLM API
-    chat_messages = get_chat_history(session_id, db)
+    try:
+        chat_messages = get_chat_history(session_id, db, SYSTEM_PROMPT, MAX_HISTORY)
+    except Exception:
+        logger.exception("Failed to build chat history for lesson update session %s", session_id)
+        return JSONResponse(status_code=500, content={"error": "Failed to build lesson update context."})
     chat_messages.append({"role": "user", "content": f'''Update the lesson plan by integrating the new content - \n{new_content} in to the current lesson plan - \n{currentContent} appropriately preserving the pedagogical flow. 
                           In the response provide the full content of the updated lesson plan. Do not include any additional texts in the response.
                           When adding new content start with "### EDI integration start.". Mention this in a new line.
                           At the end of the new content mention "### EDI integration end." '''
                           })
-    response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=chat_messages
-        )
+    try:
+        response = client.chat.completions.create(
+                model="gpt-4.1-mini",
+                messages=chat_messages
+            )
+    except Exception:
+        logger.exception("OpenAI call failed for lesson update session %s", session_id)
+        return JSONResponse(status_code=502, content={"error": "Failed to generate updated lesson plan."})
     api_response = response.choices[0].message.content
     new_edit = extract_edi_section(api_response)
     target_text = get_last_paragraph_before_edi(api_response)
@@ -628,18 +571,21 @@ async def update_lesson(session_id: str = Form(...), new_content: str = Form(...
     
     full_update_message = f"{success_message}\n\n{clean_api_response}"
     db.add(Message(session_id=session_id, role="assistant", content=full_update_message))
-    download_message = "You can download the updated lesson plan by clicking the “Download Lesson Plan” button in the right panel. \n\n Would you like further support with this lesson plan? You can request additional support by selecting a support option from the right panel or by describing your requirements directly in the chat. \n\n If you would like to integrate EDI principles into a different lesson plan, you can upload a new lesson plan at any time."    
+    download_message = "You can download the updated lesson plan by clicking the “Download Updated Lesson Plan” button in the right panel. \n\n Would you like further support with this lesson plan? You can request additional support by selecting a support option from the right panel or by describing your requirements directly in the chat. \n\n If you would like to integrate EDI principles into a different lesson plan, you can upload a new lesson plan at any time."    
     db.add(Message(session_id=session_id, role="assistant", content=download_message))
     
     db.commit()
-    db.close()
 
     return {"response": full_update_message, "download_message": download_message, "session_id": session_id}
 
 @app.get("/previewLesson")
-def preview_lesson(session_id: str):
-    db = SessionLocal()
+def preview_lesson(session_id: str, db: Session = Depends(get_db)):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
+    if not chat_session:
+        return JSONResponse(status_code=404, content={"error": "Session not found."})
+
+    if not chat_session.updated_lesson:
+        return JSONResponse(status_code=404, content={"error": "Updated lesson not found."})
   
     updated = chat_session.updated_lesson
 
@@ -653,31 +599,57 @@ def preview_lesson(session_id: str):
     html += "</div>"
 
     bot_message = "You can download the updated lesson plan by clicking the “Download Lesson Plan” button in the right panel. \n\n Would you like further support with this lesson plan? You can request additional support by selecting a support option from the right panel or by describing your requirements directly in the chat. \n\n If you would like to integrate EDI principles into a different lesson plan, you can upload a new lesson plan at any time."
-    db.close()
     return {"html": html, "bot_message":bot_message, "session_id": session_id}
 
 #Download updated lesson plan functionality
 @app.get("/downloadLesson")
-def download_lesson(session_id: str = Query(...)):
-    db = SessionLocal()
+def download_lesson(session_id: str = Query(...), db: Session = Depends(get_db)):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
     
     if not chat_session or not chat_session.working_file_path:
         return JSONResponse(status_code=404, content={"error": "Working file path not found."})
 
     # Create a .docx document
-    doc = Document(chat_session.working_file_path)
+    try:
+        doc = Document(chat_session.working_file_path)
+    except Exception:
+        logger.exception("Failed to load working lesson document for session %s", session_id)
+        return JSONResponse(status_code=500, content={"error": "Failed to prepare lesson download."})
     edits = load_edits(chat_session)
 
-    if edits:
-        for e in edits:
-            for para in doc.paragraphs:
-                if e["target_text"] in para.text:
-                    insert_paragraph_after(
-                        para,
-                        f"💡 EDI Content: {e['new_content']}"
-                    )
-                    break
+    # Keep only the latest edit for each anchor so repeated updates do not stack
+    deduped_edits = []
+    seen_targets = set()
+    for edit in reversed(edits):
+        target_text = edit.get("target_text")
+        if not target_text or target_text in seen_targets:
+            continue
+        seen_targets.add(target_text)
+        deduped_edits.append(edit)
+    deduped_edits.reverse()
+
+    if deduped_edits:
+        for e in deduped_edits:
+            target_text = e.get("target_text", "")
+            if not target_text:
+                continue
+
+            best_paragraph = None
+            best_score = 0.0
+            best_index = -1
+            for para_index, para in enumerate(doc.paragraphs):
+                score = paragraph_match_score(target_text, para.text)
+
+                if score > best_score or (score == best_score and para_index > best_index):
+                    best_score = score
+                    best_paragraph = para
+                    best_index = para_index
+
+            if best_paragraph and best_score >= 0.3:
+                insert_paragraph_after(
+                    best_paragraph,
+                    f"💡 EDI Content: {e['new_content']}"
+                )
 
     # Save to in-memory stream
     file_stream = io.BytesIO()
@@ -694,9 +666,13 @@ def download_lesson(session_id: str = Query(...)):
     )
 
 @app.post("/submitFeedback")
-async def submit_feedback(session_id: str = Form(...), feedback: str = Form(...), feedbackProvider: str = Form(...)):
-    db = SessionLocal()
-    db.add(Feedback(session_id=session_id, feedback=feedback, name=feedbackProvider))
+def submit_feedback(
+    session_id: str = Form(...),
+    feedback: str = Form(...),
+    feedbackProvider: str = Form(...),
+    feedbackProviderEmail: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    db.add(Feedback(session_id=session_id, feedback=feedback, name=feedbackProvider, email=feedbackProviderEmail))
     db.commit()
-    db.close()
     return {"message": "Feedback submitted successfully."}

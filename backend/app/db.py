@@ -41,10 +41,14 @@ engine = create_engine(
 
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-# FastAPI dependency example
+
 def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+	db = SessionLocal()
+	try:
+		yield db
+	except Exception:
+		db.rollback()
+		raise
+	finally:
+		db.close()
+
