@@ -9,12 +9,13 @@ from docx import Document
 from typing import Optional, List
 from sqlalchemy.orm import Session
 from .init_db import init_db
-from .models import ChatSession, Message, Feedback, User, SupportingDocument
+from .models import ChatSession, Message, Feedback, User, SupportingDocument, SupportingDocumentChunk, SupportingDocumentChunkVector
 from .auth_utils import hash_password, parse_user_id, verify_password
 from .chat_utils import derive_session_preview, get_chat_history, summarize_old_messages
 from .db import get_db
 from .file_utils import (
     build_inline_disposition,
+    build_view_file_link,
     collect_safe_candidate_paths,
     ensure_filename_with_extension,
     extract_edi_section,
@@ -32,32 +33,13 @@ from .file_utils import (
     sorted_prefixed_file_paths,
 )
 from .prompt_utils import SYSTEM_PROMPT
-from .schemas import AuthRequest, AuthResponse
+from .rag_utils import index_supporting_document_chunks, retrieve_supporting_doc_context
+from .schemas import AuthRequest, AuthResponse, ForgotPasswordRequest
 from fastapi.responses import StreamingResponse
 import io
 import json
 import logging
 from pdf2docx import Converter
-from urllib.parse import urlencode
-
-
-def build_view_file_link(request: Request, session_id: str, file_kind: str, file_id: str) -> str:
-    params = urlencode(
-        {
-            "session_id": session_id,
-            "file_kind": file_kind,
-            "file_id": file_id,
-        }
-    )
-
-    # In deployed setups behind Nginx, set PUBLIC_API_BASE to /api (or full API URL).
-    public_api_base = (os.getenv("PUBLIC_API_BASE") or "").strip().rstrip("/")
-    if public_api_base:
-        if public_api_base.startswith("http://") or public_api_base.startswith("https://") or public_api_base.startswith("/"):
-            return f"{public_api_base}/viewFile?{params}"
-        return f"/{public_api_base}/viewFile?{params}"
-
-    return f"{request.url_for('view_file')}?{params}"
 
 #Load OpenAI API key
 load_dotenv()
@@ -99,25 +81,32 @@ if not os.access(SUPPORTING_DOCS_DIR, os.W_OK):
 def register(payload: AuthRequest, db: Session = Depends(get_db)):
     username = payload.username.strip()
     password = payload.password
+    name = (payload.name or "").strip()
+    email = (payload.email or "").strip()
+    institution = (payload.institution or "").strip()
     if not username.strip() or not password:
         return JSONResponse(status_code=400, content={"success": False, "message": "Username and password are required."})
+    if not name or not email or not institution:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Name, email, and institution are required for registration."},
+        )
 
     existing_user = db.query(User).filter(User.username == username).first()
     if existing_user:
         return JSONResponse(status_code=400, content={"success": False, "message": "Username already exists."})
 
     password_hash = hash_password(password)
-    user = User(username=username, password_hash=password_hash)
+    user = User(username=username, password_hash=password_hash, name=name, email=email, institution=institution)
     db.add(user)
     db.commit()
     db.refresh(user)
 
     return {"success": True, "user_id": user.id, "username": user.username}
 
-
 @app.post("/login", response_model=AuthResponse)
 def login(payload: AuthRequest, db: Session = Depends(get_db)):
-    username = payload.username.strip()
+    username = payload.username.strip()    
     password = payload.password
     if not username.strip() or not password:
         return JSONResponse(status_code=400, content={"success": False, "message": "Username and password are required."})
@@ -127,6 +116,31 @@ def login(payload: AuthRequest, db: Session = Depends(get_db)):
         return JSONResponse(status_code=401, content={"success": False, "message": "Invalid username or password."})
 
     return {"success": True, "user_id": user.id, "username": user.username}
+
+
+@app.post("/forgot-password", response_model=AuthResponse)
+def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db)):
+    username = payload.username.strip()
+    email = payload.email.strip().lower()
+    new_password = payload.new_password
+
+    if not username or not email or not new_password:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Username, email, and new password are required."},
+        )
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not user.email or user.email.strip().lower() != email:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "The username and email do not match our records."},
+        )
+
+    user.password_hash = hash_password(new_password)
+    db.commit()
+
+    return {"success": True, "message": "Password reset successful. You can sign in with your new password."}
 
 @app.post("/chatStart")
 def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
@@ -201,7 +215,10 @@ def chatContinue(
         logger.exception("Failed to build chat history for session %s", session_id)
         return JSONResponse(status_code=500, content={"error": "Failed to build chat context."})
 
+    # Keep separate context buckets so lesson-plan content and supporting-document
+    # content can be handled differently downstream.
     uploaded_contexts = []
+    uploaded_supporting_docs = []
 
     for idx, file in enumerate(uploaded_files):
         current_type = file_type_by_index.get(idx, "lesson_plan")
@@ -238,8 +255,8 @@ def chatContinue(
             working_file_path = output_path
             working_file_type = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
-        # Extract context from the working file so update anchors align with
-        # the document used later for downloads (important for PDF->DOCX flow).
+        # Extract context from the working file so later edit anchors match the
+        # document users will actually download, especially after PDF->DOCX conversion.
         source_path = working_file_path
         if source_path.lower().endswith(".docx"):
             try:
@@ -280,7 +297,7 @@ def chatContinue(
             db.add(Message(session_id=session_id, role="user", content=f"📎 [View lesson plan: {file.filename}]", file_link=file_link))
             db.add(Message(session_id=session_id, role="user", content=f"Lesson Plan:\n{file_content}", visible=False))
 
-            # Update lesson plan in chat session using latest uploaded lesson plan
+            # Persist the latest lesson-plan upload as the editable source of truth.
             chat_session.original_lesson = file_content
             chat_session.updated_lesson = file_content
             chat_session.file_name = file.filename
@@ -291,7 +308,7 @@ def chatContinue(
             chat_session.working_file_type = working_file_type
             chat_session.suggested_edits = json.dumps([])
         else:
-            uploaded_contexts.append(f"Supporting Document:\n{file_content}")
+            uploaded_supporting_docs.append(file.filename)
             file_link = build_view_file_link(
                 request=request,
                 session_id=session_id,
@@ -299,7 +316,6 @@ def chatContinue(
                 file_id=str(unique_id),
             )
             db.add(Message(session_id=session_id, role="user", content=f"📎 [View supporting document: {file.filename}]", file_link=file_link))
-            db.add(Message(session_id=session_id, role="user", content=f"Supporting Document:\n{file_content}", visible=False))
 
             supporting_doc = SupportingDocument(
                 session_id=session_id,
@@ -308,15 +324,63 @@ def chatContinue(
                 file_type=file.content_type
             )
             db.add(supporting_doc)
+            db.flush()
+            chunk_count = index_supporting_document_chunks(db, client, session_id, supporting_doc.id, file_content)
+            db.add(
+                Message(
+                    session_id=session_id,
+                    role="system",
+                    content=f"Supporting document indexed with embeddings: {file.filename} ({chunk_count} chunks).",
+                    visible=False,
+                )
+            )
 
     if uploaded_contexts and message:
         chat_messages.append({"role": "user", "content": "\n\n".join(uploaded_contexts) + "\n" + message})
         db.add(Message(session_id=session_id, role="user", content=message))
     elif uploaded_contexts:
         chat_messages.append({"role": "user", "content": "\n\n".join(uploaded_contexts)})
-    elif message and not uploaded_files:
+    elif message:
         chat_messages.append({"role": "user", "content": message})
         db.add(Message(session_id=session_id, role="user", content=message))
+
+    retrieval_query = (message or "").strip()
+    if retrieval_query and uploaded_supporting_docs:
+        retrieval_query = (
+            f"{retrieval_query}\n\n"
+            "Relevant uploaded supporting document(s): "
+            f"{', '.join(uploaded_supporting_docs)}"
+        )
+    if not retrieval_query and uploaded_supporting_docs:
+        retrieval_query = "summarise uploaded supporting documents and ask how to use them"
+
+    rag_context = retrieve_supporting_doc_context(db, client, session_id, retrieval_query)
+    if rag_context:
+        chat_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Use the following retrieved supporting-document context when it is relevant to the educator's request. "
+                    "If it is not relevant, ignore it.\n\n"
+                    f"{rag_context}"
+                ),
+            }
+        )
+
+    # If the user only uploaded supporting docs, prompt the model to acknowledge
+    # them explicitly instead of treating the turn as silent document ingestion.
+    if uploaded_supporting_docs and not message:
+        docs_list = ", ".join(uploaded_supporting_docs)
+        chat_messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "I uploaded supporting document(s): "
+                    f"{docs_list}. Please acknowledge and briefly summarize their focus, "
+                    "then ask how I want to use them with my lesson plan."
+                ),
+            }
+        )
 
     try:
         response = client.chat.completions.create(
@@ -401,7 +465,9 @@ def remove_supporting_doc(doc_id: int = Form(...), db: Session = Depends(get_db)
     except Exception as e:
         print(f"Warning: Could not delete file {supporting_doc.file_path}: {str(e)}")
     
-    # Delete from database
+    # Delete retrieval vectors/chunks and then metadata from database
+    db.query(SupportingDocumentChunkVector).filter_by(supporting_document_id=supporting_doc.id).delete()
+    db.query(SupportingDocumentChunk).filter_by(supporting_document_id=supporting_doc.id).delete()
     db.delete(supporting_doc)
     db.commit()
     
@@ -421,7 +487,8 @@ def view_file(
 ):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
 
-    # Preferred behavior for new links: resolve by immutable file UUID.
+    # Preferred behavior for new links: resolve by immutable file UUID so a link
+    # never drifts to a later upload with the same session.
     if file_id:
         safe_id = (file_id or "").strip()
         base_dir = LESSON_PLANS_DIR if file_kind == "lesson_plan" else SUPPORTING_DOCS_DIR
@@ -697,10 +764,9 @@ def download_lesson(session_id: str = Query(...), db: Session = Depends(get_db))
 def submit_feedback(
     session_id: str = Form(...),
     feedback: str = Form(...),
-    feedbackProvider: str = Form(...),
-    feedbackProviderEmail: str = Form(...),
+    user_id: str = Form(...),
     db: Session = Depends(get_db),
 ):
-    db.add(Feedback(session_id=session_id, feedback=feedback, name=feedbackProvider, email=feedbackProviderEmail))
+    db.add(Feedback(session_id=session_id, feedback=feedback, user_id=user_id))
     db.commit()
     return {"message": "Feedback submitted successfully."}

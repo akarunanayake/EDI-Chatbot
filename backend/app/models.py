@@ -9,6 +9,9 @@ class User(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(100), unique=True, nullable=False)
     password_hash = Column(String(256), nullable=False)
+    name = Column(String(100))
+    email = Column(String(100))
+    institution = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow)
 
 class ChatSession(Base):
@@ -47,12 +50,33 @@ class SupportingDocument(Base):
     file_type = Column(String, nullable=False)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
 
+
+class SupportingDocumentChunk(Base):
+    __tablename__ = "supporting_document_chunks"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=False)
+    supporting_document_id = Column(Integer, ForeignKey("supporting_documents.id"), nullable=False)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    content_lower = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class SupportingDocumentChunkVector(Base):
+    __tablename__ = "supporting_document_chunk_vectors"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    chunk_id = Column(Integer, ForeignKey("supporting_document_chunks.id"), nullable=False)
+    session_id = Column(String(36), ForeignKey("chat_sessions.id"), nullable=False)
+    supporting_document_id = Column(Integer, ForeignKey("supporting_documents.id"), nullable=False)
+    embedding_model = Column(String(100), nullable=False)
+    embedding_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 class Feedback(Base):
     __tablename__ = "chat_feedback"
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
     session_id = Column(String(36), ForeignKey("chat_sessions.id"))
     timestamp = Column(DateTime, default=datetime.utcnow)
-    name = Column(String(50))
-    email = Column(String(100))
     feedback = Column(Text)
     

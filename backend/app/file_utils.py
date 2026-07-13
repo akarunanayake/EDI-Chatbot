@@ -3,8 +3,9 @@ from difflib import SequenceMatcher
 import json
 import re
 import os
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
+from fastapi import Request
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.shared import RGBColor
@@ -171,6 +172,26 @@ def build_inline_disposition(name: str | None) -> str:
     ascii_fallback = ascii_fallback.replace('"', "")
     encoded = quote(cleaned)
     return f"inline; filename=\"{ascii_fallback}\"; filename*=UTF-8''{encoded}"
+
+
+def build_view_file_link(request: Request, session_id: str, file_kind: str, file_id: str) -> str:
+    #Build a stable file-view URL for the current deployment.
+    params = urlencode(
+        {
+            "session_id": session_id,
+            "file_kind": file_kind,
+            "file_id": file_id,
+        }
+    )
+
+    # In deployed setups behind Nginx, set PUBLIC_API_BASE to /api (or full API URL).
+    public_api_base = (os.getenv("PUBLIC_API_BASE") or "").strip().rstrip("/")
+    if public_api_base:
+        if public_api_base.startswith("http://") or public_api_base.startswith("https://") or public_api_base.startswith("/"):
+            return f"{public_api_base}/viewFile?{params}"
+        return f"/{public_api_base}/viewFile?{params}"
+
+    return f"{request.url_for('view_file')}?{params}"
 
 
 def guess_media_type(file_path: str) -> str:

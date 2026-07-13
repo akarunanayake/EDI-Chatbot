@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { apiGet, apiPostForm } from "../api/client";
-import { SUPPORT_PROMPTS } from "./chatConstants";
+import { SUPPORT_PROMPTS, SUPPORT_PROMPT_GUIDANCE, SUPPORT_PROMPT_CONTEXT } from "./chatConstants";
 import ChatSidebar from "./ChatSidebar";
 import ChatCenterPanel from "./ChatCenterPanel";
 import ChatActionPanel from "./ChatActionPanel";
 import FeedbackModal from "./FeedbackModal";
+import PromptGuidanceModal from "./PromptGuidanceModal";
 
 const Chatbot = () => {
   const navigate = useNavigate();
@@ -31,13 +32,14 @@ const Chatbot = () => {
   const [chatError, setChatError] = useState("");
   const [showFeedbackPopup, setShowFeedbackPopup] = useState(false);
   const [feedbackText, setFeedbackText] = useState("");
-  const [feedbackProvider, setFeedbackProvider] = useState("");
-  const [feedbackProviderEmail, setFeedbackProviderEmail] = useState("");
   const [pendingFiles, setPendingFiles] = useState([]);
   const [fileType, setFileType] = useState("lesson_plan");
   const [showAttachmentMenu, setShowAttachmentMenu] = useState(false);
   const [showLoginWelcome, setShowLoginWelcome] = useState(true);
   const [startingChat, setStartingChat] = useState(false);
+  const [showPromptGuidance, setShowPromptGuidance] = useState(false);
+  const [selectedSupportOption, setSelectedSupportOption] = useState(null);
+  const [draftPrompt, setDraftPrompt] = useState("");
   const fileInputRef = useRef(null);
   const MAX_HEIGHT = 240;
   const hasUserId = user && user.id !== null && user.id !== undefined;
@@ -230,22 +232,34 @@ const Chatbot = () => {
     }
   };
 
-  //Trigger when click support option button - populate textarea with editable template
+  //Trigger when click support option button - open guidance dialog first
   const handleOptionClick = (opt) => {
-    const template = SUPPORT_PROMPTS[opt.value];
-    if (userInput.current) {
-      userInput.current.value = template;
-      // Adjust textarea height
-      userInput.current.style.height = "auto";
-      if (userInput.current.scrollHeight <= MAX_HEIGHT) {
-        userInput.current.style.height = `${userInput.current.scrollHeight}px`;
-        userInput.current.style.overflowY = "hidden";
-      } else {
-        userInput.current.style.height = `${MAX_HEIGHT}px`;
-        userInput.current.style.overflowY = "auto";
-      }
-      userInput.current.focus();
+    const template =
+      SUPPORT_PROMPT_GUIDANCE[opt.value]?.samplePrompt ||
+      SUPPORT_PROMPTS[opt.value] ||
+      "";
+    setSelectedSupportOption(opt);
+    setDraftPrompt(template);
+    setShowPromptGuidance(true);
+  };
+
+  const applyPromptToInput = () => {
+    if (!userInput.current) {
+      setShowPromptGuidance(false);
+      return;
     }
+
+    userInput.current.value = draftPrompt;
+    userInput.current.style.height = "auto";
+    if (userInput.current.scrollHeight <= MAX_HEIGHT) {
+      userInput.current.style.height = `${userInput.current.scrollHeight}px`;
+      userInput.current.style.overflowY = "hidden";
+    } else {
+      userInput.current.style.height = `${MAX_HEIGHT}px`;
+      userInput.current.style.overflowY = "auto";
+    }
+    userInput.current.focus();
+    setShowPromptGuidance(false);
   };
 
   //Trigger when click Update lesson plan
@@ -292,17 +306,14 @@ const Chatbot = () => {
 
     const formData = new FormData();
     formData.append("session_id", sessionId);
+    formData.append("user_id", user.id);
     formData.append("feedback", feedbackText);
-    formData.append("feedbackProvider", feedbackProvider);
-    formData.append("feedbackProviderEmail", feedbackProviderEmail);
 
     try {
       await apiPostForm("/submitFeedback", formData);
       alert("🙏 Thank you for your feedback!");
       setShowFeedbackPopup(false);
       setFeedbackText("");
-      setFeedbackProvider("");
-      setFeedbackProviderEmail("");
     } catch (err) {
       alert(`⚠️ ${getErrorMessage(err, "Failed to submit feedback.")}`);
     }
@@ -362,14 +373,40 @@ const Chatbot = () => {
 
       <FeedbackModal
         show={showFeedbackPopup}
-        feedbackProvider={feedbackProvider}
-        setFeedbackProvider={setFeedbackProvider}
-        feedbackProviderEmail={feedbackProviderEmail}
-        setFeedbackProviderEmail={setFeedbackProviderEmail}
         feedbackText={feedbackText}
         setFeedbackText={setFeedbackText}
         onCancel={() => setShowFeedbackPopup(false)}
         onSubmit={submitFeedback}
+      />
+
+      <PromptGuidanceModal
+        show={showPromptGuidance}
+        title={
+          SUPPORT_PROMPT_GUIDANCE[selectedSupportOption?.value]?.title ||
+          selectedSupportOption?.label ||
+          "Prompt Guidance"
+        }
+        description={
+          SUPPORT_PROMPT_GUIDANCE[selectedSupportOption?.value]?.description ||
+          "Use the tips below to refine your prompt for the chatbot."
+        }
+        context={
+          SUPPORT_PROMPT_CONTEXT.lessonPlan +
+          "\n" +
+          SUPPORT_PROMPT_CONTEXT.supportingDocuments
+        }
+        tips={
+          SUPPORT_PROMPT_GUIDANCE[selectedSupportOption?.value]?.tips ||
+          [
+            "Describe what you would like to improve.",
+            "Mention any specific EDI goals or concerns.",
+            "If no lesson plan has been uploaded, briefly describe your lesson.",
+          ]
+        }
+        draftPrompt={draftPrompt}
+        setDraftPrompt={setDraftPrompt}
+        onCancel={() => setShowPromptGuidance(false)}
+        onUsePrompt={applyPromptToInput}
       />
 
     </div>

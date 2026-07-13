@@ -1,9 +1,5 @@
 const FeedbackModal = ({
   show,
-  feedbackProvider,
-  setFeedbackProvider,
-  feedbackProviderEmail,
-  setFeedbackProviderEmail,
   feedbackText,
   setFeedbackText,
   onCancel,
@@ -18,20 +14,6 @@ const FeedbackModal = ({
           Send Feedback
         </h2>
 
-        <input
-          type="text"
-          placeholder="Your name"
-          value={feedbackProvider}
-          onChange={(e) => setFeedbackProvider(e.target.value)}
-          className="w-full border rounded-lg px-4 py-2 mb-4"
-        />
-        <input
-          type="email"
-          placeholder="Your email"
-          value={feedbackProviderEmail}
-          onChange={(e) => setFeedbackProviderEmail(e.target.value)}
-          className="w-full border rounded-lg px-4 py-2 mb-4"
-        />
         <textarea
           value={feedbackText}
           onChange={(e) => setFeedbackText(e.target.value)}

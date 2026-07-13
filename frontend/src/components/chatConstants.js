@@ -38,3 +38,65 @@ export const SUPPORT_PROMPTS = {
   "5": `Audit my lesson plan against criteria: representation, accessibility/UDL, inclusive language, assessment equity, student agency, and classroom safety. For each criterion give: a 1-5 rating, a concise justification, 2 specific improvements (one immediate, one strategic), and a checklist of actionable changes to update the lesson plan.`,
   "6": `I need help with: {describe_need}. Context: lesson title "{lesson_title}", level {undergraduate/postgraduate}, constraints {time/tech/class-size}, and desired outcome {what_you_want}. Provide: tailored step-by-step suggestions, sample materials or prompts, accessibility considerations, a short teacher script for rollout, and recommended next actions.`,
 };
+
+export const SUPPORT_PROMPT_CONTEXT = {
+  lessonPlan: "If you have uploaded a lesson plan, it will automatically be used as context. If you haven't uploaded a lesson plan, please briefly describe your lesson or teaching context in your prompt.",
+  supportingDocuments: "If you have uploaded any supporting documents that are relevant to your request, mention in your prompt how you would like the chatbot to use them."
+}
+
+export const SUPPORT_PROMPT_GUIDANCE = {
+  "1": {
+    title: "Integrate EDI Principles into My Lesson Plan",
+    description: "Improve your lesson plan by incorporating Equity, Diversity and Inclusion (EDI) principles while maintaining the intended learning outcomes.",
+    tips: [
+      "Describe the improvements you would like to make (e.g., teaching activities, learning resources, accessibility, inclusive language, student participation, or representation of diverse perspectives).",
+      "Mention any specific EDI goals or concerns (e.g., improving accessibility, increasing cultural representation, reducing bias, or creating more inclusive learning experiences)."
+    ],
+    samplePrompt: "Please review my lesson plan and recommend practical ways to better integrate Equity, Diversity and Inclusion (EDI) principles. Suggest improvements to teaching activities, learning resources, accessibility, inclusive language, student participation, and representation where appropriate while maintaining the intended learning outcomes."
+  },
+  "2": {
+    title: "Include Better Examples or Datasets",
+    description: "Replace or enhance lesson examples, case studies, scenarios, or datasets to better represent diverse perspectives and support inclusive learning.",
+    tips: [
+      "Describe what you would like to improve (e.g., examples, datasets, case studies, scenarios, demonstrations, or learning resources).",
+      "Mention the kinds of perspectives you would like represented (e.g., different cultures, genders, abilities, industries, communities, socioeconomic backgrounds, or global contexts)."
+    ],
+    samplePrompt: "Please review my lesson plan and recommend more inclusive examples, datasets, case studies, scenarios, or learning resources where appropriate. Ensure the recommendations represent diverse perspectives while remaining relevant to the lesson objectives."
+  },
+  "3": {
+    title: "Design an EDI-Integrated Assignment",
+    description: "Create or improve an assessment that aligns with your lesson while embedding Equity, Diversity and Inclusion (EDI) principles.",
+    tips: [
+      "Describe the type of assessment you need (e.g., individual assignment, group project, presentation, practical activity, quiz, or reflection).",
+      "Mention any assessment requirements or constraints (e.g., learning outcomes, grading criteria, duration, or assessment format).",
+    ],
+    samplePrompt: "Please design or improve an assessment for this lesson that integrates Equity, Diversity and Inclusion (EDI) principles. Ensure it aligns with the lesson learning outcomes and promotes inclusion, accessibility, fairness, and diverse perspectives."
+  },
+  "4": {
+    title: "Include Reflective Questions",
+    description: "Generate reflective questions that encourage students to critically engage with Equity, Diversity and Inclusion (EDI) concepts related to the lesson.",
+    tips: [
+      "Describe what students should reflect on (e.g., ethical issues, bias, inclusion, accessibility, professional practice, or multiple perspectives).",
+      "Mention the type of reflection you want (e.g., discussion questions, individual reflection, classroom activity, or assessment questions).",
+    ],
+    samplePrompt: "Please generate reflective questions for this lesson that encourage students to critically consider Equity, Diversity and Inclusion (EDI) in relation to the lesson content. The questions should promote critical thinking, ethical reasoning, multiple perspectives, and inclusive practice."
+  },
+  "5": {
+    title: "Evaluate Lesson Plan for EDI",
+    description: "Review your lesson plan and identify strengths, gaps, and opportunities to improve Equity, Diversity and Inclusion (EDI).",
+    tips: [
+      "Describe the type of feedback you would like (e.g., overall review, accessibility, representation, teaching strategies, learning activities, assessments, or inclusive language).",
+      "Mention any areas you are particularly concerned about (e.g., bias, accessibility, cultural representation, or student engagement).",
+    ],
+    samplePrompt: "Please evaluate my lesson plan from an Equity, Diversity and Inclusion (EDI) perspective. Identify strengths, potential gaps, and opportunities for improvement across teaching strategies, learning activities, assessments, accessibility, representation, and inclusive language. Where appropriate. Provide practical recommendations and explain the reasoning behind each suggestion."
+  },
+  "6": {
+    title: "Request Custom EDI Support",
+    description: "Request any other EDI-related teaching support that is not covered by the previous options.",
+    tips: [
+      "Clearly describe what you would like the chatbot to help you with (e.g., redesigning a learning activity, creating teaching resources, reviewing content, or answering an EDI-related teaching question).",
+      "Explain the outcome you are hoping to achieve (e.g., improve student engagement, enhance accessibility, align with policy, or increase representation).",
+    ],
+    samplePrompt: "I would like assistance with the following EDI-related teaching task: [Describe your request here.] Provide practical, evidence-informed recommendations that support inclusive teaching while maintaining the intended learning outcomes. Explain the reasoning behind your recommendations."
+  },
+};

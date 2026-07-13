@@ -65,7 +65,12 @@ def derive_session_preview(session_id: str, db) -> str:
 
 
 def summarize_old_messages(session_id: str, db, client, max_history: int):
-    all_messages = db.query(Message).filter_by(session_id=session_id).order_by(Message.timestamp).all()
+    all_messages = (
+        db.query(Message)
+        .filter_by(session_id=session_id, visible=True)
+        .order_by(Message.timestamp)
+        .all()
+    )
     if len(all_messages) <= max_history:
         return None
 
@@ -83,7 +88,12 @@ def summarize_old_messages(session_id: str, db, client, max_history: int):
 
 def get_chat_history(session_id: str, db, system_prompt: str, max_history: int):
     session = db.query(ChatSession).filter_by(id=session_id).first()
-    history = db.query(Message).filter_by(session_id=session_id).order_by(Message.timestamp).all()
+    history = (
+        db.query(Message)
+        .filter_by(session_id=session_id, visible=True)
+        .order_by(Message.timestamp)
+        .all()
+    )
     messages = [{"role": message.role, "content": message.content} for message in history][-max_history:]
 
     system_prompt_present = any(
