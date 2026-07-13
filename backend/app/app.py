@@ -40,6 +40,7 @@ import io
 import json
 import logging
 from pdf2docx import Converter
+from starlette.concurrency import run_in_threadpool
 
 #Load OpenAI API key
 load_dotenv()
@@ -143,7 +144,7 @@ def forgot_password(payload: ForgotPasswordRequest, db: Session = Depends(get_db
     return {"success": True, "message": "Password reset successful. You can sign in with your new password."}
 
 @app.post("/chatStart")
-def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
+async def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
     session_id = str(uuid4())  # Create unique session ID
     user_id_int = parse_user_id(user_id)
     print(f"Starting new chat session: {session_id} for user_id: {user_id_int} (received: {user_id})")
@@ -152,10 +153,11 @@ def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)
     db.add(Message(session_id=session_id, role="system", content=SYSTEM_PROMPT, visible=False))
 
     try:
-        response = client.chat.completions.create(
-                model="gpt-4.1-mini",
-                messages= [{"role": "system", "content": SYSTEM_PROMPT}]
-            )
+        response = await run_in_threadpool(
+            client.chat.completions.create,
+            model="gpt-4.1-mini",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}],
+        )
     except Exception:
         logger.exception("OpenAI call failed while starting chat session %s", session_id)
         return JSONResponse(status_code=502, content={"error": "Failed to start chat. Please try again."})
@@ -168,7 +170,7 @@ def chatStart(user_id: Optional[str] = Form(None), db: Session = Depends(get_db)
     return {"response": api_response, "session_id" :session_id}
 
 @app.post("/chatContinue")
-def chatContinue(
+async def chatContinue(
     request: Request,
     message: str = Form(None),
     session_id: str = Form(...),
@@ -383,9 +385,10 @@ def chatContinue(
         )
 
     try:
-        response = client.chat.completions.create(
+        response = await run_in_threadpool(
+            client.chat.completions.create,
             model="gpt-4.1-mini",
-            messages=chat_messages
+            messages=chat_messages,
         )
     except Exception:
         logger.exception("OpenAI call failed while continuing session %s", session_id)
@@ -608,7 +611,7 @@ def view_file(
 
 #Lesson plan update functionality
 @app.post("/updateLesson")
-def update_lesson(session_id: str = Form(...), new_content: str = Form(...), db: Session = Depends(get_db)):
+async def update_lesson(session_id: str = Form(...), new_content: str = Form(...), db: Session = Depends(get_db)):
     chat_session = db.query(ChatSession).filter_by(id=session_id).first()
     existing_edits = []
     
@@ -644,10 +647,11 @@ def update_lesson(session_id: str = Form(...), new_content: str = Form(...), db:
                           At the end of the new content mention "### EDI integration end." '''
                           })
     try:
-        response = client.chat.completions.create(
-                model="gpt-4.1-mini",
-                messages=chat_messages
-            )
+        response = await run_in_threadpool(
+            client.chat.completions.create,
+            model="gpt-4.1-mini",
+            messages=chat_messages,
+        )
     except Exception:
         logger.exception("OpenAI call failed for lesson update session %s", session_id)
         return JSONResponse(status_code=502, content={"error": "Failed to generate updated lesson plan."})
