@@ -2,7 +2,8 @@ const PromptGuidanceModal = ({
   show,
   title,
   description,
-  context,
+  lesson_plan_context,
+  support_document_context,
   tips,
   draftPrompt,
   setDraftPrompt,
@@ -26,9 +27,16 @@ const PromptGuidanceModal = ({
 
         <section>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-700">ℹ Context</h3>
-          <p className="mt-2 text-sm leading-6 text-gray-600">
-            {context}
-          </p>
+          <ul className="mt-2 space-y-2 text-sm text-gray-600">
+            <li className="flex gap-2">
+              <span className="mt-0.5 text-gray-500">•</span>
+              <span>{lesson_plan_context}</span>
+            </li>
+            <li className="flex gap-2">
+              <span className="mt-0.5 text-gray-500">•</span>
+              <span>{support_document_context}</span>
+            </li>
+          </ul>
         </section>
 
         <section className="mt-5">

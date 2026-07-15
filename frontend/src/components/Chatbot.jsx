@@ -390,9 +390,10 @@ const Chatbot = () => {
           SUPPORT_PROMPT_GUIDANCE[selectedSupportOption?.value]?.description ||
           "Use the tips below to refine your prompt for the chatbot."
         }
-        context={
-          SUPPORT_PROMPT_CONTEXT.lessonPlan +
-          "\n" +
+        lesson_plan_context={
+          SUPPORT_PROMPT_CONTEXT.lessonPlan
+        }
+        support_document_context={
           SUPPORT_PROMPT_CONTEXT.supportingDocuments
         }
         tips={

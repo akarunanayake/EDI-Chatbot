@@ -363,11 +363,12 @@ async def chatContinue(
                 "role": "system",
                 "content": (
                     "Use the following retrieved supporting-document context when it is relevant to the educator's request. "
-                    "If it is not relevant, ignore it.\n\n"
+                    "\n\n"
                     f"{rag_context}"
                 ),
             }
         )
+        print(rag_context)
 
     # If the user only uploaded supporting docs, prompt the model to acknowledge
     # them explicitly instead of treating the turn as silent document ingestion.
