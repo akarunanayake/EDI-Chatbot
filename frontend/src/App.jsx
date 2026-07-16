@@ -15,14 +15,32 @@ function ViewFileRedirect() {
   return null;
 }
 
+function AppRoutes() {
+  const location = useLocation();
+
+  // Track page views with StatCounter on route changes
+  useEffect(() => {
+    if (window.statcounter) {
+      window.statcounter.count({
+        url: location.pathname,
+        title: document.title,
+      });
+    }
+  }, [location.pathname]);
+
+  return (
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/chat" element={<Chatbot />} />
+      <Route path="/viewFile" element={<ViewFileRedirect />} />
+    </Routes>
+  );
+}
+
 function App() {
   return (
     <Router>
-      <Routes>
-        <Route path="/" element={<LandingPage />} />
-        <Route path="/chat" element={<Chatbot />} />
-        <Route path="/viewFile" element={<ViewFileRedirect />} />
-      </Routes>
+      <AppRoutes />
     </Router>
   );
 }

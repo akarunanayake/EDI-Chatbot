@@ -21,13 +21,8 @@ const ChatActionPanel = ({
           {SUPPORT_OPTIONS.map((opt) => (
             <button
               key={opt.value}
-              disabled={!lessonPlanUploaded}
               onClick={() => handleOptionClick(opt)}
-              className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition ${
-                lessonPlanUploaded
-                  ? "bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
-                  : "bg-gray-100 text-gray-400 cursor-not-allowed"
-              }`}
+              className="w-full text-left px-3 py-2 rounded-lg border text-sm transition bg-blue-50 hover:bg-blue-100 text-blue-800 border-blue-200"
             >
               {opt.value}. {opt.label}
             </button>
